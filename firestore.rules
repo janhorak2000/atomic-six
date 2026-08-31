@@ -1,35 +1,35 @@
 rules_version = '2';
 
-// DRAFT rules - a starting point, not final. Tighten these once matches,
-// decks, and matchmaking collections take real shape. The core idea:
-// - Anyone signed in can read public stuff (leaderboard, open matches).
-// - You can only ever write to documents that represent YOUR OWN data.
-// - Nobody can silently edit an opponent's side of a live match.
+// Matches the actual collections used by src/App.jsx:
+//   users/{uid}                      - profile (add fields here as you build a leaderboard)
+//   users/{uid}/decks/{hero}         - one doc per hero, { deck: [...30 card ids] }
+//   matchmakingQueue/{uid}           - one doc per waiting player, keyed by their own uid
+//   matches/{matchId}                - live match state, playerIds: [uid, uid]
 
 service cloud.firestore {
   match /databases/{database}/documents {
 
-    // Each user's own profile: display name, tier, win/loss record.
     match /users/{userId} {
       allow read: if true; // public leaderboard needs to read everyone
       allow write: if request.auth != null && request.auth.uid == userId;
     }
 
-    // Each user's saved decks, one doc per hero.
-    match /users/{userId}/decks/{deckId} {
+    match /users/{userId}/decks/{hero} {
       allow read, write: if request.auth != null && request.auth.uid == userId;
     }
 
-    // The matchmaking queue: anyone signed in can add themselves,
-    // or remove themselves (cancel search).
-    match /matchmaking/{entryId} {
+    // Queue entries are keyed by the waiting player's own uid, so "own the
+    // doc ID" is the same check as "own the data."
+    match /matchmakingQueue/{entryUid} {
       allow read: if request.auth != null;
-      allow create: if request.auth != null && request.resource.data.uid == request.auth.uid;
-      allow delete: if request.auth != null && resource.data.uid == request.auth.uid;
+      allow create, delete: if request.auth != null && request.auth.uid == entryUid;
+      // Updates (someone else claiming this entry by setting matchedInto)
+      // are allowed from any signed-in user, but only to set matchedInto -
+      // nothing else about the waiting player's entry can be changed.
+      allow update: if request.auth != null &&
+        request.resource.data.diff(resource.data).affectedKeys().hasOnly(['matchedInto']);
     }
 
-    // Live matches: only the two participants can read or write,
-    // and only the two participants may ever be listed on it.
     match /matches/{matchId} {
       allow read: if request.auth != null &&
         request.auth.uid in resource.data.playerIds;
