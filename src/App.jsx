@@ -1614,9 +1614,18 @@ function LegendaryLeaderboard({ myUid }) {
   );
 }
 
-function LeaderboardScreen({ onBack, myProfile, sessionId }) {
+function LeaderboardScreen({ onBack, myProfile, sessionId, profileLoading }) {
   const p = myProfile || { wins: 0, losses: 0, winStreak: 0, lossStreak: 0, tier: "Bronze" };
   const { monthWins, monthLosses } = monthStatsFor(p);
+
+  if (profileLoading) {
+    return (
+      <div style={{ fontFamily: FONT, padding: 20, maxWidth: 640, margin: "0 auto" }}>
+        <h2 style={{ fontSize: 18, borderBottom: "2px solid #000", paddingBottom: 6 }}>Leaderboard</h2>
+        <p style={{ fontSize: 13, color: "#666", marginTop: 12 }}>Loading your stats...</p>
+      </div>
+    );
+  }
 
   return (
     <div style={{ fontFamily: FONT, padding: 20, maxWidth: 640, margin: "0 auto" }}>
@@ -1649,11 +1658,20 @@ function LeaderboardScreen({ onBack, myProfile, sessionId }) {
 }
 
 /* ---------- Hero select screen ---------- */
-function QuestsScreen({ onBack, myProfile }) {
+function QuestsScreen({ onBack, myProfile, profileLoading }) {
   const wp = weeklyProgressFor(myProfile);
   const tier = myProfile ? (myProfile.tier || "Bronze") : "Bronze";
   const quests = selectWeeklyQuests(wp.weekId);
   const claimed = new Set(wp.claimedQuestIds || []);
+
+  if (profileLoading) {
+    return (
+      <div style={{ fontFamily: FONT, padding: 20, maxWidth: 640, margin: "0 auto" }}>
+        <h2 style={{ fontSize: 18, borderBottom: "2px solid #000", paddingBottom: 6 }}>Weekly Quests</h2>
+        <p style={{ fontSize: 13, color: "#666", marginTop: 12 }}>Loading your progress...</p>
+      </div>
+    );
+  }
 
   return (
     <div style={{ fontFamily: FONT, padding: 20, maxWidth: 640, margin: "0 auto" }}>
@@ -2417,6 +2435,7 @@ export default function App() {
   const [user, setUser] = useState(null);
   const [authLoading, setAuthLoading] = useState(true);
   const [myProfile, setMyProfile] = useState(null);
+  const [profileLoading, setProfileLoading] = useState(true);
   const [myLegendaryRank, setMyLegendaryRank] = useState(null);
   const [onlineCount, setOnlineCount] = useState(null);
   const [reconnectInfo, setReconnectInfo] = useState(null); // {gameId, myIdx, hero} if an unfinished match was found
@@ -2583,11 +2602,12 @@ export default function App() {
   // whatever that timing turns out to be, rather than us trying to predict
   // how long a write takes to become visible to a fresh read.
   useEffect(() => {
-    if (!sessionId) { setMyProfile(null); return; }
+    if (!sessionId) { setMyProfile(null); setProfileLoading(true); return; }
+    setProfileLoading(true);
     const unsub = onSnapshot(
       doc(db, "users", sessionId),
-      (snap) => { setMyProfile(snap.exists() ? snap.data() : null); },
-      (err) => { console.error("Profile listener failed:", err); }
+      (snap) => { setMyProfile(snap.exists() ? snap.data() : null); setProfileLoading(false); },
+      (err) => { console.error("Profile listener failed:", err); setProfileLoading(false); }
     );
     return () => unsub();
   }, [sessionId]);
@@ -3028,7 +3048,7 @@ export default function App() {
               background: TIER_STYLES.Gold.gradient, boxShadow: TIER_STYLES.Gold.glow, color: TIER_STYLES.Gold.text,
               fontWeight: 700, fontSize: 10,
             }}>
-              {myProfile?.bullets || 0} Bullets
+              {profileLoading ? "…" : `${myProfile?.bullets || 0} Bullets`}
             </div>
             <div style={{ fontSize: 10, color: "#888", marginTop: 2 }}>Players Online: {onlineCount === null ? "…" : onlineCount}</div>
           </div>
@@ -3053,8 +3073,8 @@ export default function App() {
         </div>
       )}
       {screen === "select" && <HeroSelectScreen onPick={startSearch} onBuildDeck={openDeckBuilder} onPlayCpu={startCpuMatch} onShowLeaderboard={() => setScreen("leaderboard")} onShowQuests={() => setScreen("quests")} myProfile={myProfile} myLegendaryRank={myLegendaryRank} customDecks={customDecks} />}
-      {screen === "leaderboard" && <LeaderboardScreen onBack={() => setScreen("select")} myProfile={myProfile} sessionId={sessionId} />}
-      {screen === "quests" && <QuestsScreen onBack={() => setScreen("select")} myProfile={myProfile} />}
+      {screen === "leaderboard" && <LeaderboardScreen onBack={() => setScreen("select")} myProfile={myProfile} sessionId={sessionId} profileLoading={profileLoading} />}
+      {screen === "quests" && <QuestsScreen onBack={() => setScreen("select")} myProfile={myProfile} profileLoading={profileLoading} />}
       {screen === "deckbuilder" && <DeckBuilderScreen hero={deckBuilderHero} initialDeck={customDecks[deckBuilderHero] || null} onSave={(deck) => saveCustomDeck(deckBuilderHero, deck)} onCancel={() => setScreen("select")} />}
       {screen === "searching" && <SearchingScreen hero={hero} onCancel={cancelSearch} />}
       {screen === "game" && gameState && <GameScreen state={gameState} myIdx={myIdx} onAction={handleAction} onConcede={concede} actionError={actionError} onSync={manualSync} onBackToMenu={returnToMenu} isCpuMatch={isCpuMatch} />}
