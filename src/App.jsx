@@ -220,7 +220,7 @@ function CardArt({ card, size = 34 }) {
   if (override) {
     return <img src={override} alt={card.name} style={{ width: size, height: size, objectFit: "cover", filter: "grayscale(100%)", border: "1px solid #ccc", borderRadius: 3 }} />;
   }
-  return <canvas ref={canvasRef} width={90} height={90} style={{ width: size, height: size, borderRadius: 3, imageRendering: "auto" }} />;
+  return <canvas ref={canvasRef} width={360} height={360} style={{ width: size, height: size, borderRadius: 3, imageRendering: "auto" }} />;
 }
 
 /* =========================================================================
@@ -1108,13 +1108,46 @@ function WrapFitText({ text, width, height, maxFontSize, minFontSize = 5.5, dura
   );
 }
 
-function MiniCard({ cardId, onClick, disabled, small }) {
+function MiniCard({ cardId, onClick, disabled, small, allowDetail }) {
   const c = findCard(cardId);
   const r = RARITY_STYLE[c.rarity];
   const badgeReserve = small ? 20 : 22;
+  const [showDetail, setShowDetail] = useState(false);
+  const pressTimer = useRef(null);
+  const longPressFired = useRef(false);
+
+  const startPress = () => {
+    if (!allowDetail) return;
+    longPressFired.current = false;
+    pressTimer.current = setTimeout(() => {
+      longPressFired.current = true;
+      setShowDetail(true);
+    }, 550);
+  };
+  const cancelPress = () => {
+    if (pressTimer.current) { clearTimeout(pressTimer.current); pressTimer.current = null; }
+  };
+  const handleClick = () => {
+    if (longPressFired.current) { longPressFired.current = false; return; }
+    if (!disabled && onClick) onClick();
+  };
+  const handleContextMenu = (e) => {
+    if (!allowDetail) return;
+    e.preventDefault();
+    setShowDetail(true);
+  };
+
   return (
+    <>
     <div
-      onClick={disabled ? undefined : onClick}
+      onClick={handleClick}
+      onContextMenu={handleContextMenu}
+      onMouseDown={startPress}
+      onMouseUp={cancelPress}
+      onMouseLeave={cancelPress}
+      onTouchStart={startPress}
+      onTouchEnd={cancelPress}
+      onTouchMove={cancelPress}
       style={{
         width: small ? 92 : 112, minWidth: small ? 92 : 112, height: small ? 132 : 160,
         border: `2px ${c.type === "spell" ? "dashed" : "solid"} ${r.border}`, borderRadius: 6, background: r.bg,
@@ -1150,6 +1183,8 @@ function MiniCard({ cardId, onClick, disabled, small }) {
         )}
       </div>
     </div>
+    {showDetail && <CardDetailModal card={c} onClose={() => setShowDetail(false)} />}
+    </>
   );
 }
 
@@ -1165,7 +1200,7 @@ function CardDetailModal({ card, onClose }) {
       <div
         onClick={(e) => e.stopPropagation()}
         style={{
-          width: 240, border: `3px ${card.type === "spell" ? "dashed" : "solid"} ${r.border}`, borderRadius: 10,
+          width: 392, border: `3px ${card.type === "spell" ? "dashed" : "solid"} ${r.border}`, borderRadius: 10,
           background: r.bg, padding: 16, fontFamily: FONT, boxShadow: "2px 2px 0 rgba(0,0,0,0.25)", textAlign: "center",
         }}
       >
@@ -1173,7 +1208,7 @@ function CardDetailModal({ card, onClose }) {
           {card.cost !== null && <div style={{ fontSize: 15, fontWeight: 700, border: "1px solid #000", borderRadius: 4, minWidth: 22, padding: "1px 3px" }}>{card.cost}</div>}
           <div style={{ fontSize: 14, fontWeight: 700 }}>{card.name}</div>
         </div>
-        <div style={{ display: "flex", justifyContent: "center", marginBottom: 10 }}><CardArt card={card} size={80} /></div>
+        <div style={{ display: "flex", justifyContent: "center", marginBottom: 10 }}><CardArt card={card} size={360} /></div>
         {card.text && <div style={{ fontSize: 12, lineHeight: 1.4, color: "#333", marginBottom: 10 }}>{card.text}</div>}
         {card.type !== "spell" && (
           <div style={{ display: "flex", justifyContent: "center", gap: 24, marginBottom: 12, fontSize: 16, fontWeight: 700 }}>
@@ -2172,7 +2207,7 @@ function GameScreen({ state, myIdx, onAction, onConcede, actionError, onSync, on
 
       {/* my board (3-column grid of minions, up to 2 rows / 6 minions) + End Turn pinned right, under Concede */}
       <div style={{ display: "flex", gap: 8, alignItems: "flex-start", borderTop: "1px dashed #999", paddingTop: 8, marginBottom: 8 }}>
-        <div style={{ display: "grid", gridTemplateColumns: "repeat(3, 70px)", gridAutoRows: 92, columnGap: 6, rowGap: 18, flex: 1, justifyContent: "space-evenly" }}>
+        <div style={{ display: "grid", gridTemplateColumns: "repeat(3, 70px)", gridAutoRows: 92, columnGap: 6, rowGap: 18, justifyContent: "start" }}>
           {meBoardWithGhosts.map((m) =>
             m.__dying ? (
               <div key={m.uid} style={{ animation: "minionDisintegrate 1s forwards", pointerEvents: "none" }}>
@@ -2228,7 +2263,7 @@ function GameScreen({ state, myIdx, onAction, onConcede, actionError, onSync, on
         {me.hand.map((cardId, i) => {
           const c = findCard(cardId);
           const disabled = !myTurn || c.cost > me.mana || (c.type === "minion" && boardFull);
-          return <MiniCard key={i} cardId={cardId} onClick={() => handleCardClick(i)} disabled={disabled} />;
+          return <MiniCard key={i} cardId={cardId} onClick={() => handleCardClick(i)} disabled={disabled} allowDetail />;
         })}
       </div>
 
