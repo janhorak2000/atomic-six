@@ -2578,19 +2578,33 @@ export default function App() {
     setReconnectInfo(null);
   }
 
+  const refreshMyProfile = useCallback(async () => {
+    if (!sessionId) return;
+    // Prefer a guaranteed server read so this always reflects what's truly
+    // saved, not a leftover local cache value. Fall back to the regular
+    // cache-or-server read only if that fails outright (e.g. no connection),
+    // so a genuinely offline user still sees their last-known data.
+    let snap = await fGetFromServer(["users", sessionId]);
+    if (snap === null) snap = await fGet(["users", sessionId]);
+    setMyProfile(snap);
+  }, [sessionId]);
+
   useEffect(() => {
     if (!user) { setMyProfile(null); return; }
-    (async () => {
-      // Prefer a guaranteed server read so a refresh always reflects what's
-      // truly saved, not a leftover local cache value. Fall back to the
-      // regular cache-or-server read only if that fails outright (e.g. no
-      // connection), so a genuinely offline user still sees their last-known
-      // data instead of nothing.
-      let snap = await fGetFromServer(["users", user.uid]);
-      if (snap === null) snap = await fGet(["users", user.uid]);
-      setMyProfile(snap);
-    })();
+    refreshMyProfile();
   }, [user]);
+
+  // Keep stats continuously correct rather than relying on a single load:
+  // re-check every 20s while the app is open, and immediately the moment the
+  // tab regains focus (covers login, page visits, backgrounding/returning,
+  // and refreshes all in one place).
+  useEffect(() => {
+    if (!sessionId) return;
+    const interval = setInterval(refreshMyProfile, 20000);
+    const onVisible = () => { if (document.visibilityState === "visible") refreshMyProfile(); };
+    document.addEventListener("visibilitychange", onVisible);
+    return () => { clearInterval(interval); document.removeEventListener("visibilitychange", onVisible); };
+  }, [sessionId, refreshMyProfile]);
 
   // Record match results exactly once per match. Both ranked tier/streak
   // stats AND quest/bullet progress are ranked-matches-only — CPU games
