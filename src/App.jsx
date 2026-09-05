@@ -2,7 +2,7 @@ import React, { useState, useEffect, useRef, useCallback } from "react";
 import { auth, db, signInWithGoogle, signOutUser } from "./firebase.js";
 import { onAuthStateChanged } from "firebase/auth";
 import {
-  doc, getDoc, setDoc, deleteDoc, onSnapshot,
+  doc, getDoc, getDocFromServer, setDoc, deleteDoc, onSnapshot,
   collection, query, where, orderBy, limit, getDocs, runTransaction,
 } from "firebase/firestore";
 
@@ -30,6 +30,23 @@ async function fGet(path) {
     return null;
   }
 }
+// Forces a genuine round-trip to Firestore's servers, bypassing the SDK's
+// local cache entirely. Firestore applies writes to its local cache
+// optimistically and resolves setDoc()'s promise before the server has
+// necessarily confirmed anything - so a plain getDoc() right after a write
+// can be satisfied by that same optimistic local state even if the write
+// never actually reaches the server (e.g. a flaky connection). Use this
+// wherever "is this really saved" or "what does the server actually have"
+// matters, rather than the default cache-or-server getDoc().
+async function fGetFromServer(path) {
+  try {
+    const snap = await getDocFromServer(doc(db, ...path));
+    return snap.exists() ? snap.data() : null;
+  } catch (e) {
+    console.error("fGetFromServer failed:", path, e);
+    return null;
+  }
+}
 async function fSet(path, value, retries = 2) {
   for (let attempt = 0; attempt <= retries; attempt++) {
     try {
@@ -43,22 +60,23 @@ async function fSet(path, value, retries = 2) {
   return false;
 }
 // For writes where silently losing data would be bad (match results): write,
-// then immediately read the document back and confirm it actually matches
-// what we intended to save. This catches failure modes a thrown-exception
-// check alone would miss - the write call can resolve successfully while the
-// data still doesn't come back correctly on a later, unrelated read.
+// then confirm directly with the SERVER (not the local cache) that it
+// actually matches what we intended to save. A plain getDoc() readback isn't
+// enough here - it can be satisfied by the same optimistic local write we're
+// trying to verify, which is precisely how a failed sync can look successful
+// right up until a later fresh page load reveals the server never got it.
 async function fSetVerified(path, value, checkFields, retries = 2) {
   for (let attempt = 0; attempt <= retries; attempt++) {
     try {
       await setDoc(doc(db, ...path), value);
-      const verifySnap = await getDoc(doc(db, ...path));
+      const verifySnap = await getDocFromServer(doc(db, ...path));
       if (verifySnap.exists()) {
         const data = verifySnap.data();
         const matches = checkFields.every((f) => JSON.stringify(data[f]) === JSON.stringify(value[f]));
         if (matches) return true;
-        console.error("fSetVerified: write succeeded but read-back didn't match, retrying:", path);
+        console.error("fSetVerified: server confirmed write didn't match, retrying:", path);
       } else {
-        console.error("fSetVerified: write succeeded but document doesn't exist on read-back:", path);
+        console.error("fSetVerified: document doesn't exist on server after write:", path);
       }
     } catch (e) {
       console.error(`fSetVerified failed (attempt ${attempt + 1}/${retries + 1}):`, path, e);
@@ -1200,7 +1218,7 @@ function CardDetailModal({ card, onClose }) {
       <div
         onClick={(e) => e.stopPropagation()}
         style={{
-          width: 392, border: `3px ${card.type === "spell" ? "dashed" : "solid"} ${r.border}`, borderRadius: 10,
+          width: 302, border: `3px ${card.type === "spell" ? "dashed" : "solid"} ${r.border}`, borderRadius: 10,
           background: r.bg, padding: 16, fontFamily: FONT, boxShadow: "2px 2px 0 rgba(0,0,0,0.25)", textAlign: "center",
         }}
       >
@@ -1208,7 +1226,7 @@ function CardDetailModal({ card, onClose }) {
           {card.cost !== null && <div style={{ fontSize: 15, fontWeight: 700, border: "1px solid #000", borderRadius: 4, minWidth: 22, padding: "1px 3px" }}>{card.cost}</div>}
           <div style={{ fontSize: 14, fontWeight: 700 }}>{card.name}</div>
         </div>
-        <div style={{ display: "flex", justifyContent: "center", marginBottom: 10 }}><CardArt card={card} size={360} /></div>
+        <div style={{ display: "flex", justifyContent: "center", marginBottom: 10 }}><CardArt card={card} size={270} /></div>
         {card.text && <div style={{ fontSize: 12, lineHeight: 1.4, color: "#333", marginBottom: 10 }}>{card.text}</div>}
         {card.type !== "spell" && (
           <div style={{ display: "flex", justifyContent: "center", gap: 24, marginBottom: 12, fontSize: 16, fontWeight: 700 }}>
@@ -2563,7 +2581,13 @@ export default function App() {
   useEffect(() => {
     if (!user) { setMyProfile(null); return; }
     (async () => {
-      const snap = await fGet(["users", user.uid]);
+      // Prefer a guaranteed server read so a refresh always reflects what's
+      // truly saved, not a leftover local cache value. Fall back to the
+      // regular cache-or-server read only if that fails outright (e.g. no
+      // connection), so a genuinely offline user still sees their last-known
+      // data instead of nothing.
+      let snap = await fGetFromServer(["users", user.uid]);
+      if (snap === null) snap = await fGet(["users", user.uid]);
       setMyProfile(snap);
     })();
   }, [user]);
