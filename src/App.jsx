@@ -2578,41 +2578,19 @@ export default function App() {
     setReconnectInfo(null);
   }
 
-  const refreshMyProfile = useCallback(async () => {
-    if (!sessionId) return;
-    // Prefer a guaranteed server read so this always reflects what's truly
-    // saved, not a leftover local cache value. Fall back to the regular
-    // cache-or-server read only if that fails outright (e.g. no connection),
-    // so a genuinely offline user still sees their last-known data.
-    let snap = await fGetFromServer(["users", sessionId]);
-    if (snap === null) snap = await fGet(["users", sessionId]);
-    setMyProfile(snap);
+  // Live profile listener instead of polling on a guessed schedule: this
+  // pushes the correct data the moment it's actually available server-side,
+  // whatever that timing turns out to be, rather than us trying to predict
+  // how long a write takes to become visible to a fresh read.
+  useEffect(() => {
+    if (!sessionId) { setMyProfile(null); return; }
+    const unsub = onSnapshot(
+      doc(db, "users", sessionId),
+      (snap) => { setMyProfile(snap.exists() ? snap.data() : null); },
+      (err) => { console.error("Profile listener failed:", err); }
+    );
+    return () => unsub();
   }, [sessionId]);
-
-  useEffect(() => {
-    if (!user) { setMyProfile(null); return; }
-    refreshMyProfile();
-    // The very first request right after a fresh page load can race Firestore's
-    // SDK still establishing its connection, occasionally returning stale/empty
-    // data even from a "from server" call. A couple of quick follow-ups a few
-    // seconds later catch that cold-start window fast, rather than waiting on
-    // the slower 20s periodic cycle to eventually self-correct.
-    const t1 = setTimeout(refreshMyProfile, 2500);
-    const t2 = setTimeout(refreshMyProfile, 6000);
-    return () => { clearTimeout(t1); clearTimeout(t2); };
-  }, [user]);
-
-  // Keep stats continuously correct rather than relying on a single load:
-  // re-check every 20s while the app is open, and immediately the moment the
-  // tab regains focus (covers login, page visits, backgrounding/returning,
-  // and refreshes all in one place).
-  useEffect(() => {
-    if (!sessionId) return;
-    const interval = setInterval(refreshMyProfile, 20000);
-    const onVisible = () => { if (document.visibilityState === "visible") refreshMyProfile(); };
-    document.addEventListener("visibilitychange", onVisible);
-    return () => { clearInterval(interval); document.removeEventListener("visibilitychange", onVisible); };
-  }, [sessionId, refreshMyProfile]);
 
   // Record match results exactly once per match. Both ranked tier/streak
   // stats AND quest/bullet progress are ranked-matches-only — CPU games
