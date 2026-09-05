@@ -2600,16 +2600,31 @@ export default function App() {
   // Live profile listener instead of polling on a guessed schedule: this
   // pushes the correct data the moment it's actually available server-side,
   // whatever that timing turns out to be, rather than us trying to predict
-  // how long a write takes to become visible to a fresh read.
+  // how long a write takes to become visible to a fresh read. Firestore can
+  // fire onSnapshot twice on first attach - once immediately from whatever's
+  // in the local cache (possibly stale, from a previous session), then again
+  // once the server confirms the real data. We ignore the cache-sourced one
+  // entirely so the UI never shows that stale flash, and only commit once
+  // the server has actually confirmed it.
   useEffect(() => {
     if (!sessionId) { setMyProfile(null); setProfileLoading(true); return; }
     setProfileLoading(true);
+    let gotServerData = false;
+    const offlineFallback = setTimeout(() => {
+      if (!gotServerData) setProfileLoading(false); // don't loop forever if genuinely offline
+    }, 5000);
     const unsub = onSnapshot(
       doc(db, "users", sessionId),
-      (snap) => { setMyProfile(snap.exists() ? snap.data() : null); setProfileLoading(false); },
-      (err) => { console.error("Profile listener failed:", err); setProfileLoading(false); }
+      (snap) => {
+        if (snap.metadata.fromCache) return;
+        gotServerData = true;
+        clearTimeout(offlineFallback);
+        setMyProfile(snap.exists() ? snap.data() : null);
+        setProfileLoading(false);
+      },
+      (err) => { console.error("Profile listener failed:", err); clearTimeout(offlineFallback); setProfileLoading(false); }
     );
-    return () => unsub();
+    return () => { unsub(); clearTimeout(offlineFallback); };
   }, [sessionId]);
 
   // Record match results exactly once per match. Both ranked tier/streak
