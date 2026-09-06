@@ -245,7 +245,7 @@ function CardArt({ card, size = 34 }) {
   }, [card.name, card.id, override]);
 
   if (override) {
-    return <img src={override} alt={card.name} style={{ width: size, height: size, objectFit: "cover", filter: "grayscale(100%)", border: "1px solid #ccc", borderRadius: 3 }} />;
+    return <img src={override} alt={card.name} style={{ width: size, height: size, objectFit: "cover", border: "1px solid #ccc", borderRadius: 3 }} />;
   }
   return <canvas ref={canvasRef} width={360} height={360} style={{ width: size, height: size, borderRadius: 3, imageRendering: "auto" }} />;
 }
