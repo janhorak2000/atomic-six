@@ -511,6 +511,42 @@ const TOKENS = {
 function findCard(id) { return CARD_DB.find((c) => c.id === id); }
 function findCardByName(name) { return CARD_DB.find((c) => c.name === name); }
 
+/* =========================================================================
+   OWNERSHIP / SHOP — every card created so far is the "Standard Set". A
+   fresh account picks one hero free at signup, which unlocks that hero's
+   full card set plus every neutral common/rare (free for everyone, always)
+   and one random neutral epic + one random neutral unique. Anything else
+   must be unlocked via the Shop, either as a bundle, a whole hero (which
+   also grants one more random neutral epic + unique), or an individual card.
+   ========================================================================= */
+const HERO_UNLOCK_COST = 2250;
+const UNLOCK_ALL_COST = 7500;
+const CARD_UNLOCK_COST = { common: 50, rare: 100, epic: 200, unique: 400 };
+
+function isCardUnlocked(card, profile) {
+  if (!profile) return false;
+  if (profile.unlockedAll) return true;
+  if (card.hero) {
+    return (profile.unlockedHeroes || []).includes(card.hero) || (profile.unlockedCardIds || []).includes(card.id);
+  }
+  if (card.rarity === "common" || card.rarity === "rare") return true; // free for everyone, always
+  return (profile.unlockedCardIds || []).includes(card.id);
+}
+function isHeroUnlocked(hero, profile) {
+  if (!profile) return false;
+  return !!profile.unlockedAll || (profile.unlockedHeroes || []).includes(hero);
+}
+// One random neutral epic + one random neutral unique - used both at first
+// signup and as the bonus that comes with every individual hero purchase.
+function randomNeutralBonusCardIds() {
+  const epics = CARD_DB.filter((c) => !c.hero && c.rarity === "epic");
+  const uniques = CARD_DB.filter((c) => !c.hero && c.rarity === "unique");
+  const ids = [];
+  if (epics.length) ids.push(pickRandomN(epics, 1)[0].id);
+  if (uniques.length) ids.push(pickRandomN(uniques, 1)[0].id);
+  return ids;
+}
+
 /* ---------- preset 30-card decks ---------- */
 const NEUTRAL_COMMON_DEFS = CARD_DB.filter((c) => c.rarity === "common" && !c.hero);
 const NEUTRAL_UNIQUE_DEFS = CARD_DB.filter((c) => c.rarity === "unique" && !c.hero);
@@ -1721,6 +1757,195 @@ function QuestsScreen({ onBack, myProfile, profileLoading }) {
   );
 }
 
+// Rough locale-based guess only - NOT real IP geolocation. Good enough to
+// show a plausible currency symbol; a real payment provider would determine
+// this properly at checkout time.
+function guessCurrency() {
+  try {
+    const locale = (Intl.NumberFormat().resolvedOptions().locale || navigator.language || "en-US");
+    const region = (locale.split("-")[1] || "").toUpperCase();
+    const euroRegions = ["AT", "BE", "CY", "EE", "FI", "FR", "DE", "GR", "IE", "IT", "LV", "LT", "LU", "MT", "NL", "PT", "SK", "SI", "ES", "HR"];
+    return euroRegions.includes(region) ? "EUR" : "USD";
+  } catch (e) {
+    return "USD";
+  }
+}
+
+// Replace with your real Google account email(s) before deploying. This
+// gates the UI only - see the deployment notes on why the Firestore rules
+// ALSO need updating for this to be a genuine security boundary.
+const ADMIN_EMAILS = ["janhorak2000@gmail.com"];
+
+function AdminGrantPanel() {
+  const [amount, setAmount] = useState("");
+  const [emailsText, setEmailsText] = useState("");
+  const [running, setRunning] = useState(false);
+  const [results, setResults] = useState(null);
+  const [progress, setProgress] = useState(0);
+
+  async function runGrant() {
+    const amt = parseInt(amount, 10);
+    const emails = emailsText.split(/[\n,;]+/).map((e) => e.trim()).filter(Boolean);
+    if (!amt || amt <= 0 || emails.length === 0) return;
+    setRunning(true);
+    setResults(null);
+    setProgress(0);
+    const out = [];
+    for (let i = 0; i < emails.length; i++) {
+      const email = emails[i];
+      try {
+        const snap = await getDocs(query(collection(db, "users"), where("email", "==", email)));
+        if (snap.empty) {
+          out.push({ email, ok: false, reason: "no account found with this email" });
+        } else {
+          const docSnap = snap.docs[0];
+          const data = docSnap.data();
+          const ok = await fSet(["users", docSnap.id], { ...data, bullets: (data.bullets || 0) + amt });
+          out.push({ email, ok, reason: ok ? "" : "write failed" });
+        }
+      } catch (e) {
+        out.push({ email, ok: false, reason: String(e) });
+      }
+      setProgress(i + 1);
+    }
+    setResults(out);
+    setRunning(false);
+  }
+
+  return (
+    <div style={{ marginTop: 10 }}>
+      <p style={{ fontSize: 11, color: "#333" }}>Bullet amount to grant to each account:</p>
+      <input
+        type="number" value={amount} onChange={(e) => setAmount(e.target.value)}
+        style={{ fontFamily: FONT, fontSize: 13, padding: "6px 8px", border: "2px solid #000", borderRadius: 4, width: 140 }}
+      />
+      <p style={{ fontSize: 11, color: "#333", marginTop: 10 }}>Email addresses (one per line, or comma-separated - works for a large batch at once):</p>
+      <textarea
+        value={emailsText} onChange={(e) => setEmailsText(e.target.value)}
+        rows={6}
+        style={{ fontFamily: FONT, fontSize: 12, padding: 8, border: "2px solid #000", borderRadius: 4, width: "100%", boxSizing: "border-box" }}
+        placeholder={"player1@example.com\nplayer2@example.com"}
+      />
+      <button
+        onClick={runGrant}
+        disabled={running}
+        style={{ marginTop: 8, padding: "8px 16px", fontFamily: FONT, fontWeight: 700, border: "2px solid #000", background: running ? "#ccc" : "#000", color: "#fff", cursor: running ? "default" : "pointer", borderRadius: 4 }}
+      >
+        {running ? `Working... (${progress})` : "Grant Bullets"}
+      </button>
+      {results && (
+        <div style={{ marginTop: 12, fontSize: 11, maxHeight: 200, overflowY: "auto", border: "1px solid #ccc", borderRadius: 4, padding: 8 }}>
+          {results.map((r, i) => (
+            <div key={i} style={{ color: r.ok ? "#1a7a1a" : "#c0392b" }}>
+              {r.ok ? "✓" : "✗"} {r.email} {r.reason ? `— ${r.reason}` : ""}
+            </div>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
+function ShopScreen({ onBack, myProfile, user, onBuyUnlockAll, onBuyHero }) {
+  const [showAdmin, setShowAdmin] = useState(false);
+  const currency = guessCurrency();
+  const symbol = currency === "EUR" ? "€" : "$";
+  const isAdmin = user && user.email && ADMIN_EMAILS.includes(user.email);
+  const bullets = myProfile?.bullets || 0;
+
+  const heroBox = (hero) => {
+    const owned = isHeroUnlocked(hero, myProfile);
+    return (
+      <div key={hero} style={{ border: "2px solid #000", borderRadius: 8, padding: 10, background: owned ? "#eee" : HERO_COLORS[hero] }}>
+        <div style={{ fontWeight: 700, fontSize: 13 }}>{hero}</div>
+        <div style={{ fontSize: 10, color: "#333", marginTop: 4 }}>
+          Unlocks all {hero} cards, plus 1 random neutral epic and 1 random neutral unique card.
+        </div>
+        <button
+          onClick={() => onBuyHero(hero)}
+          disabled={owned || bullets < HERO_UNLOCK_COST}
+          style={{ marginTop: 8, width: "100%", padding: "6px 0", fontFamily: FONT, fontWeight: 700, fontSize: 12, border: "2px solid #000", background: owned ? "#999" : "#000", color: "#fff", cursor: owned || bullets < HERO_UNLOCK_COST ? "default" : "pointer", borderRadius: 4, opacity: bullets < HERO_UNLOCK_COST && !owned ? 0.5 : 1 }}
+        >
+          {owned ? "Unlocked" : `Unlock — ${HERO_UNLOCK_COST} Bullets`}
+        </button>
+      </div>
+    );
+  };
+
+  return (
+    <div style={{ fontFamily: FONT, padding: 20, maxWidth: 640, margin: "0 auto" }}>
+      <h2 style={{ fontSize: 18, borderBottom: "2px solid #000", paddingBottom: 6 }}>Shop</h2>
+      <p style={{ fontSize: 12, color: "#555", marginTop: 6 }}>You have <b>{bullets}</b> Bullets.</p>
+
+      <div style={{ marginTop: 16, border: "2px solid #000", borderRadius: 8, padding: 12, background: "#fff2cc" }}>
+        <div style={{ fontWeight: 700, fontSize: 14 }}>Unlock Everything</div>
+        <div style={{ fontSize: 11, color: "#333", marginTop: 4 }}>All 6 heroes and every Standard Set card, unlocked at once.</div>
+        <button
+          onClick={onBuyUnlockAll}
+          disabled={!!myProfile?.unlockedAll || bullets < UNLOCK_ALL_COST}
+          style={{ marginTop: 8, padding: "8px 16px", fontFamily: FONT, fontWeight: 700, border: "2px solid #000", background: myProfile?.unlockedAll ? "#999" : "#000", color: "#fff", cursor: myProfile?.unlockedAll || bullets < UNLOCK_ALL_COST ? "default" : "pointer", borderRadius: 4 }}
+        >
+          {myProfile?.unlockedAll ? "Already Unlocked" : `Unlock All — ${UNLOCK_ALL_COST} Bullets`}
+        </button>
+      </div>
+
+      <h3 style={{ fontSize: 13, marginTop: 18 }}>Unlock a Hero</h3>
+      <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill,minmax(150px,1fr))", gap: 10, marginTop: 8 }}>
+        {HEROES.map(heroBox)}
+      </div>
+
+      <h3 style={{ fontSize: 13, marginTop: 18 }}>Booster Packs</h3>
+      <p style={{ fontSize: 10, color: "#888" }}>Coming in a future update — placeholders for now.</p>
+      <div style={{ display: "flex", gap: 10, marginTop: 8, flexWrap: "wrap" }}>
+        {[{ label: "2 Booster Packs", cost: 2250 }, { label: "10 Booster Packs", cost: 7500 }].map((b) => (
+          <div key={b.label} style={{ border: "2px solid #999", borderRadius: 8, padding: 12, background: "#eee", opacity: 0.6, minWidth: 160 }}>
+            <div style={{ fontWeight: 700, fontSize: 13 }}>{b.label}</div>
+            <button disabled style={{ marginTop: 8, padding: "6px 14px", fontFamily: FONT, fontWeight: 700, border: "2px solid #999", background: "#ccc", color: "#666", borderRadius: 4, cursor: "default" }}>
+              {b.cost} Bullets
+            </button>
+          </div>
+        ))}
+      </div>
+
+      <h3 style={{ fontSize: 13, marginTop: 18 }}>Buy More Bullets</h3>
+      <p style={{ fontSize: 10, color: "#888" }}>Payment processing isn't connected yet - these are placeholders. Currency shown is a rough guess from your browser's locale, not verified location.</p>
+      <div style={{ display: "flex", gap: 10, marginTop: 8, flexWrap: "wrap" }}>
+        {[{ bullets: 7500, price: 9.99 }, { bullets: 2250, price: 2.99 }].map((b) => (
+          <div key={b.bullets} style={{ border: "2px solid #000", borderRadius: 8, padding: 12, minWidth: 160 }}>
+            <div style={{ fontWeight: 700, fontSize: 13 }}>{b.bullets} Bullets</div>
+            <button
+              onClick={() => alert("Payment processing isn't connected yet.")}
+              style={{ marginTop: 8, padding: "6px 14px", fontFamily: FONT, fontWeight: 700, border: "2px solid #000", background: "#000", color: "#fff", borderRadius: 4, cursor: "pointer" }}
+            >
+              {symbol}{b.price.toFixed(2)}
+            </button>
+          </div>
+        ))}
+      </div>
+
+      {isAdmin && (
+        <div style={{ marginTop: 22 }}>
+          <button
+            onClick={() => setShowAdmin((v) => !v)}
+            style={{
+              padding: "10px 18px", fontFamily: FONT, fontWeight: 700, fontSize: 13, border: "2px solid #0a5d0a",
+              background: "#1fb02a", color: "#fff", borderRadius: 6, cursor: "pointer",
+              boxShadow: "0 0 16px rgba(31,176,42,0.85)",
+            }}
+          >
+            ADMIN — Grant Bullets
+          </button>
+          {showAdmin && <AdminGrantPanel />}
+        </div>
+      )}
+
+      <div style={{ marginTop: 20 }}>
+        <button onClick={onBack} style={{ padding: "8px 16px", fontFamily: FONT, fontSize: 13, border: "2px solid #000", background: "#fff", cursor: "pointer", borderRadius: 4 }}>Back</button>
+      </div>
+    </div>
+  );
+}
+
 function RulesModal({ onClose }) {
   const Section = ({ title, children }) => (
     <div style={{ marginBottom: 12 }}>
@@ -1773,9 +1998,10 @@ function RulesModal({ onClose }) {
   );
 }
 
-function HeroSelectScreen({ onPick, onBuildDeck, onPlayCpu, onShowLeaderboard, onShowQuests, myProfile, myLegendaryRank, customDecks }) {
+function HeroSelectScreen({ onPick, onBuildDeck, onPlayCpu, onShowLeaderboard, onShowQuests, onShowShop, myProfile, myLegendaryRank, customDecks }) {
   const [hero, setHero] = useState(null);
   const [showRules, setShowRules] = useState(false);
+  const [lockedHeroClicked, setLockedHeroClicked] = useState(null);
   const hasCustom = hero && customDecks && customDecks[hero];
   const tier = myProfile ? (myProfile.tier || "Bronze") : null;
   const tierStyle = tier ? TIER_STYLES[tier] : null;
@@ -1802,17 +2028,21 @@ function HeroSelectScreen({ onPick, onBuildDeck, onPlayCpu, onShowLeaderboard, o
       </div>
       {showRules && <RulesModal onClose={() => setShowRules(false)} />}
       <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill,minmax(140px,1fr))", gap: 10, marginTop: 14 }}>
-        {HEROES.map((h) => (
+        {HEROES.map((h) => {
+          const locked = !isHeroUnlocked(h, myProfile);
+          return (
           <div
             key={h}
-            onClick={() => setHero(h)}
+            onClick={() => { if (locked) setLockedHeroClicked(h); else setHero(h); }}
             style={{
               border: `2px solid ${hero === h ? "#000" : "#999"}`, borderRadius: 6, padding: 12, textAlign: "center",
               cursor: "pointer", background: HERO_COLORS[h], boxShadow: hero === h ? "0 0 0 2px #000" : "none", position: "relative",
               height: 148, boxSizing: "border-box", display: "flex", flexDirection: "column", alignItems: "center",
+              opacity: locked ? 0.45 : 1, filter: locked ? "grayscale(70%)" : "none",
             }}
           >
-            {customDecks && customDecks[h] && <div style={{ position: "absolute", top: 4, right: 4, fontSize: 8, background: "#000", color: "#fff", padding: "1px 4px", borderRadius: 3 }}>CUSTOM</div>}
+            {locked && <div style={{ position: "absolute", top: 4, left: 4, fontSize: 8, background: "#c0392b", color: "#fff", padding: "1px 4px", borderRadius: 3, fontWeight: 700 }}>LOCKED</div>}
+            {customDecks && customDecks[h] && !locked && <div style={{ position: "absolute", top: 4, right: 4, fontSize: 8, background: "#000", color: "#fff", padding: "1px 4px", borderRadius: 3 }}>CUSTOM</div>}
             <div style={{ width: 50, height: 50, minWidth: 50, border: "1px solid #000", borderRadius: 6, background: "rgba(255,255,255,0.55)", display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0, overflow: "hidden" }}>
               {HERO_ART_OVERRIDES[h] ? (
                 <img src={HERO_ART_OVERRIDES[h]} alt={h} style={{ width: "100%", height: "100%", objectFit: "cover" }} />
@@ -1825,8 +2055,21 @@ function HeroSelectScreen({ onPick, onBuildDeck, onPlayCpu, onShowLeaderboard, o
               <AutoScrollText text={`${HERO_POWERS[h].name}: ${HERO_POWERS[h].desc}`} height={32} fontSize={10} duration={8} color="#444" />
             </div>
           </div>
-        ))}
+          );
+        })}
       </div>
+      {lockedHeroClicked && (
+        <div style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.55)", display: "flex", alignItems: "center", justifyContent: "center", zIndex: 200 }} onClick={() => setLockedHeroClicked(null)}>
+          <div onClick={(e) => e.stopPropagation()} style={{ background: "#fff", border: "2px solid #000", borderRadius: 8, padding: 20, textAlign: "center", maxWidth: 300 }}>
+            <div style={{ fontWeight: 700, fontSize: 15 }}>{lockedHeroClicked} is locked</div>
+            <p style={{ fontSize: 12, color: "#555", marginTop: 8 }}>Unlock this hero in the Shop to play as them.</p>
+            <div style={{ display: "flex", gap: 8, justifyContent: "center", marginTop: 14 }}>
+              <button onClick={() => { setLockedHeroClicked(null); onShowShop(); }} style={{ fontFamily: FONT, fontWeight: 700, padding: "8px 16px", border: "2px solid #0a4fa0", background: "#1e78e0", color: "#fff", cursor: "pointer", borderRadius: 4 }}>Go to Shop</button>
+              <button onClick={() => setLockedHeroClicked(null)} style={{ fontFamily: FONT, padding: "8px 16px", border: "2px solid #000", background: "#fff", cursor: "pointer", borderRadius: 4 }}>Close</button>
+            </div>
+          </div>
+        </div>
+      )}
       {hero && (
         <div style={{ marginTop: 6, fontSize: 11, color: "#555" }}>
           {hasCustom ? "Using your custom deck for this hero." : "Using the default preset deck."}
@@ -1871,7 +2114,7 @@ function HeroSelectScreen({ onPick, onBuildDeck, onPlayCpu, onShowLeaderboard, o
   );
 }
 
-function DeckBuilderScreen({ hero, initialDeck, onSave, onCancel }) {
+function DeckBuilderScreen({ hero, initialDeck, onSave, onCancel, myProfile, onBuyCard }) {
   const pool = CARD_DB.filter((c) => c.hero === hero || !c.hero);
   const [counts, setCounts] = useState(() => {
     const c = {};
@@ -1879,6 +2122,7 @@ function DeckBuilderScreen({ hero, initialDeck, onSave, onCancel }) {
     return c;
   });
   const [saveError, setSaveError] = useState(null);
+  const [lockedCardClicked, setLockedCardClicked] = useState(null);
   const total = Object.values(counts).reduce((a, b) => a + b, 0);
   const rarityOrder = ["common", "rare", "epic", "unique"];
 
@@ -1908,24 +2152,40 @@ function DeckBuilderScreen({ hero, initialDeck, onSave, onCancel }) {
     .map(([id, n]) => ({ card: findCard(id), n }))
     .sort((a, b) => a.card.cost - b.card.cost);
 
-  function renderSection(title, cards) {
-    const sorted = rarityOrder.flatMap((r) => cards.filter((c) => c.rarity === r).sort((a, b) => a.cost - b.cost));
+  function renderSection(groupLabel, cards) {
     return (
-      <div key={title}>
-        <div style={{ fontWeight: 700, marginTop: 14, marginBottom: 6, fontSize: 12 }}>{title}</div>
-        <div style={{ display: "flex", flexWrap: "wrap", gap: 8 }}>
-          {sorted.map((c) => {
-            const cnt = counts[c.id] || 0;
-            const atCap = cnt >= c.copies;
-            const deckFull = total >= 30;
-            return (
-              <div key={c.id} style={{ position: "relative" }} onClick={() => addCopy(c)}>
-                <MiniCard cardId={c.id} small disabled={atCap || deckFull} allowDetail />
-                {cnt > 0 && <div style={{ position: "absolute", top: -6, right: -6, background: "#000", color: "#fff", borderRadius: "50%", width: 18, height: 18, fontSize: 10, display: "flex", alignItems: "center", justifyContent: "center", fontFamily: FONT, border: "1px solid #fff" }}>{cnt}</div>}
+      <div key={groupLabel}>
+        {rarityOrder.map((r) => {
+          const group = cards.filter((c) => c.rarity === r).sort((a, b) => a.cost - b.cost);
+          if (group.length === 0) return null;
+          const rarityLabel = r.charAt(0).toUpperCase() + r.slice(1);
+          return (
+            <div key={r}>
+              <div style={{ fontWeight: 700, marginTop: 14, marginBottom: 6, fontSize: 12 }}>
+                Standard Set {rarityLabel} {groupLabel}
               </div>
-            );
-          })}
-        </div>
+              <div style={{ display: "flex", flexWrap: "wrap", gap: 8 }}>
+                {group.map((c) => {
+                  const cnt = counts[c.id] || 0;
+                  const atCap = cnt >= c.copies;
+                  const deckFull = total >= 30;
+                  const locked = !isCardUnlocked(c, myProfile);
+                  return (
+                    <div
+                      key={c.id}
+                      style={{ position: "relative", opacity: locked ? 0.4 : 1, filter: locked ? "grayscale(70%)" : "none" }}
+                      onClick={() => { if (locked) setLockedCardClicked(c); else addCopy(c); }}
+                    >
+                      <MiniCard cardId={c.id} small disabled={atCap || deckFull || locked} allowDetail />
+                      {locked && <div style={{ position: "absolute", top: -6, left: -6, fontSize: 8, background: "#c0392b", color: "#fff", padding: "1px 4px", borderRadius: 3, fontWeight: 700 }}>LOCKED</div>}
+                      {!locked && cnt > 0 && <div style={{ position: "absolute", top: -6, right: -6, background: "#000", color: "#fff", borderRadius: "50%", width: 18, height: 18, fontSize: 10, display: "flex", alignItems: "center", justifyContent: "center", fontFamily: FONT, border: "1px solid #fff" }}>{cnt}</div>}
+                    </div>
+                  );
+                })}
+              </div>
+            </div>
+          );
+        })}
       </div>
     );
   }
@@ -1936,8 +2196,8 @@ function DeckBuilderScreen({ hero, initialDeck, onSave, onCancel }) {
       <div style={{ fontSize: 12, color: "#555", marginTop: 4 }}>Tap a card to add a copy. Tap a card in "Your Deck" to remove one. Max 2 copies (1 for uniques).</div>
       <div style={{ display: "flex", gap: 18, flexWrap: "wrap", marginTop: 10 }}>
         <div style={{ flex: 2, minWidth: 280, maxHeight: 480, overflowY: "auto", paddingRight: 6 }}>
-          {renderSection(`${hero} cards`, heroCards)}
-          {renderSection("Neutral cards", neutralCards)}
+          {renderSection(`${hero}'s cards`, heroCards)}
+          {renderSection("neutral cards", neutralCards)}
         </div>
         <div style={{ flex: 1, minWidth: 220, borderLeft: "1px solid #ccc", paddingLeft: 14 }}>
           <div style={{ fontWeight: 700, marginBottom: 6, fontSize: 13, color: total === 30 ? "#1a7a1a" : "#c0392b" }}>Your Deck — {total}/30</div>
@@ -1964,6 +2224,26 @@ function DeckBuilderScreen({ hero, initialDeck, onSave, onCancel }) {
         <button onClick={onCancel} style={{ padding: "10px 14px", fontFamily: FONT, fontSize: 13, border: "2px solid #000", background: "#fff", cursor: "pointer", borderRadius: 4 }}>Cancel</button>
       </div>
       {saveError && <div style={{ marginTop: 8, fontSize: 11, color: "#c0392b", background: "#fff3f2", border: "1px solid #c0392b", padding: "6px 8px", borderRadius: 4 }}>{saveError}</div>}
+      {lockedCardClicked && (
+        <div style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.55)", display: "flex", alignItems: "center", justifyContent: "center", zIndex: 200 }} onClick={() => setLockedCardClicked(null)}>
+          <div onClick={(e) => e.stopPropagation()} style={{ background: "#fff", border: "2px solid #000", borderRadius: 8, padding: 20, textAlign: "center", maxWidth: 300 }}>
+            <div style={{ fontWeight: 700, fontSize: 15 }}>{lockedCardClicked.name} is locked</div>
+            <p style={{ fontSize: 12, color: "#555", marginTop: 8 }}>
+              Unlock this card for {CARD_UNLOCK_COST[lockedCardClicked.rarity]} Bullets. Need more? Visit the Shop to buy Bullets or unlock a whole hero at once.
+            </p>
+            <div style={{ display: "flex", gap: 8, justifyContent: "center", marginTop: 14, flexWrap: "wrap" }}>
+              <button
+                onClick={() => { onBuyCard(lockedCardClicked); setLockedCardClicked(null); }}
+                disabled={(myProfile?.bullets || 0) < CARD_UNLOCK_COST[lockedCardClicked.rarity]}
+                style={{ fontFamily: FONT, fontWeight: 700, padding: "8px 16px", border: "2px solid #000", background: (myProfile?.bullets || 0) < CARD_UNLOCK_COST[lockedCardClicked.rarity] ? "#ccc" : "#000", color: "#fff", cursor: (myProfile?.bullets || 0) < CARD_UNLOCK_COST[lockedCardClicked.rarity] ? "default" : "pointer", borderRadius: 4 }}
+              >
+                Buy for {CARD_UNLOCK_COST[lockedCardClicked.rarity]} Bullets
+              </button>
+              <button onClick={() => setLockedCardClicked(null)} style={{ fontFamily: FONT, padding: "8px 16px", border: "2px solid #000", background: "#fff", cursor: "pointer", borderRadius: 4 }}>Close</button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }
@@ -2436,7 +2716,7 @@ function GameScreen({ state, myIdx, onAction, onConcede, actionError, onSync, on
    APP — orchestrates screens + matchmaking + polling
    ========================================================================= */
 export default function App() {
-  const [screen, setScreen] = useState("select"); // select | deckbuilder | searching | game | leaderboard | quests
+  const [screen, setScreen] = useState("select"); // select | deckbuilder | searching | game | leaderboard | quests | shop
   const [hero, setHero] = useState(null);
   const [gameId, setGameId] = useState(null);
   const [myIdx, setMyIdx] = useState(null);
@@ -2641,6 +2921,48 @@ export default function App() {
     return () => { unsub(); clearTimeout(offlineFallback); };
   }, [sessionId]);
 
+  async function chooseFirstHero(hero) {
+    const bonusIds = randomNeutralBonusCardIds();
+    const profile = {
+      ...(myProfile || {}),
+      email: user.email || null,
+      displayName: user.displayName || "Player",
+      unlockedHeroes: [hero],
+      unlockedCardIds: bonusIds,
+      bullets: (myProfile && myProfile.bullets) || 0,
+    };
+    await fSet(["users", user.uid], profile);
+  }
+
+  async function buyUnlockAll() {
+    if (!myProfile || (myProfile.bullets || 0) < UNLOCK_ALL_COST) return;
+    await fSet(["users", user.uid], { ...myProfile, unlockedAll: true, bullets: myProfile.bullets - UNLOCK_ALL_COST });
+  }
+
+  async function buyHeroUnlock(hero) {
+    if (!myProfile || (myProfile.bullets || 0) < HERO_UNLOCK_COST || isHeroUnlocked(hero, myProfile)) return;
+    const bonusIds = randomNeutralBonusCardIds();
+    const existingCardIds = myProfile.unlockedCardIds || [];
+    await fSet(["users", user.uid], {
+      ...myProfile,
+      unlockedHeroes: [...(myProfile.unlockedHeroes || []), hero],
+      unlockedCardIds: [...existingCardIds, ...bonusIds],
+      bullets: myProfile.bullets - HERO_UNLOCK_COST,
+    });
+  }
+
+  async function buyCardUnlock(card) {
+    if (!myProfile) return;
+    const cost = CARD_UNLOCK_COST[card.rarity] || 0;
+    if ((myProfile.bullets || 0) < cost) return;
+    if (isCardUnlocked(card, myProfile)) return;
+    await fSet(["users", user.uid], {
+      ...myProfile,
+      unlockedCardIds: [...(myProfile.unlockedCardIds || []), card.id],
+      bullets: myProfile.bullets - cost,
+    });
+  }
+
   // Record match results exactly once per match. Both ranked tier/streak
   // stats AND quest/bullet progress are ranked-matches-only — CPU games
   // don't advance either. Computed from a single read and written in a
@@ -2689,7 +3011,7 @@ export default function App() {
       });
       wp.claimedQuestIds = Array.from(claimed);
 
-      profile = { ...profile, weeklyProgress: wp, bullets, displayName: user.displayName || "Player" };
+      profile = { ...profile, weeklyProgress: wp, bullets, displayName: user.displayName || "Player", email: user.email || null };
       const ok = await fSetVerified(["users", user.uid], profile, ["wins", "losses", "bullets"]);
       if (!ok) {
         lastFailedProfileRef.current = { uid: user.uid, profile };
@@ -3064,6 +3386,27 @@ export default function App() {
     );
   }
 
+  const needsOnboarding = !profileLoading && (!myProfile || (!myProfile.unlockedAll && (!myProfile.unlockedHeroes || myProfile.unlockedHeroes.length === 0)));
+  if (needsOnboarding) {
+    return (
+      <div style={{ fontFamily: FONT, padding: 20, textAlign: "center", maxWidth: 640, margin: "20px auto" }}>
+        <h1 style={{ fontSize: 22, fontWeight: 700, borderBottom: "2px solid #000", paddingBottom: 10 }}>Choose Your First Hero</h1>
+        <p style={{ fontSize: 13, color: "#333", marginTop: 10 }}>Pick one hero to unlock for free. This also unlocks every common and rare neutral card, plus one random neutral epic and one random neutral unique - all free.</p>
+        <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill,minmax(140px,1fr))", gap: 10, marginTop: 16 }}>
+          {HEROES.map((h) => (
+            <button
+              key={h}
+              onClick={() => chooseFirstHero(h)}
+              style={{ padding: 14, fontFamily: FONT, fontSize: 15, fontWeight: 700, border: "2px solid #000", background: HERO_COLORS[h], cursor: "pointer", borderRadius: 6 }}
+            >
+              {h}
+            </button>
+          ))}
+        </div>
+      </div>
+    );
+  }
+
   return (
     <div style={{ minHeight: "100%", background: "#fff", color: "#111" }}>
       <style>{GLOBAL_STYLE}</style>
@@ -3080,6 +3423,14 @@ export default function App() {
               fontWeight: 700, fontSize: 10,
             }}>
               {profileLoading ? "…" : `${myProfile?.bullets || 0} Bullets`}
+            </div>
+            <div>
+              <button
+                onClick={() => setScreen("shop")}
+                style={{ marginTop: 3, padding: "2px 10px", fontFamily: FONT, fontWeight: 700, fontSize: 10, border: "2px solid #0a4fa0", background: "#1e78e0", color: "#fff", cursor: "pointer", borderRadius: 4 }}
+              >
+                Shop
+              </button>
             </div>
             <div style={{ fontSize: 10, color: "#888", marginTop: 2 }}>Players Online: {onlineCount === null ? "…" : onlineCount}</div>
           </div>
@@ -3103,10 +3454,11 @@ export default function App() {
           <button onClick={dismissReconnect} style={{ fontFamily: FONT, marginLeft: 6, padding: "3px 10px", border: "1px solid #999", background: "#fff", cursor: "pointer", borderRadius: 3 }}>Dismiss</button>
         </div>
       )}
-      {screen === "select" && <HeroSelectScreen onPick={startSearch} onBuildDeck={openDeckBuilder} onPlayCpu={startCpuMatch} onShowLeaderboard={() => setScreen("leaderboard")} onShowQuests={() => setScreen("quests")} myProfile={myProfile} myLegendaryRank={myLegendaryRank} customDecks={customDecks} />}
+      {screen === "select" && <HeroSelectScreen onPick={startSearch} onBuildDeck={openDeckBuilder} onPlayCpu={startCpuMatch} onShowLeaderboard={() => setScreen("leaderboard")} onShowQuests={() => setScreen("quests")} onShowShop={() => setScreen("shop")} myProfile={myProfile} myLegendaryRank={myLegendaryRank} customDecks={customDecks} />}
       {screen === "leaderboard" && <LeaderboardScreen onBack={() => setScreen("select")} myProfile={myProfile} sessionId={sessionId} profileLoading={profileLoading} />}
       {screen === "quests" && <QuestsScreen onBack={() => setScreen("select")} myProfile={myProfile} profileLoading={profileLoading} />}
-      {screen === "deckbuilder" && <DeckBuilderScreen hero={deckBuilderHero} initialDeck={customDecks[deckBuilderHero] || null} onSave={(deck) => saveCustomDeck(deckBuilderHero, deck)} onCancel={() => setScreen("select")} />}
+      {screen === "shop" && <ShopScreen onBack={() => setScreen("select")} myProfile={myProfile} user={user} onBuyUnlockAll={buyUnlockAll} onBuyHero={buyHeroUnlock} />}
+      {screen === "deckbuilder" && <DeckBuilderScreen hero={deckBuilderHero} initialDeck={customDecks[deckBuilderHero] || null} onSave={(deck) => saveCustomDeck(deckBuilderHero, deck)} onCancel={() => setScreen("select")} myProfile={myProfile} onBuyCard={buyCardUnlock} />}
       {screen === "searching" && <SearchingScreen hero={hero} onCancel={cancelSearch} />}
       {screen === "game" && gameState && <GameScreen state={gameState} myIdx={myIdx} onAction={handleAction} onConcede={concede} actionError={actionError} onSync={manualSync} onBackToMenu={returnToMenu} isCpuMatch={isCpuMatch} />}
     </div>
