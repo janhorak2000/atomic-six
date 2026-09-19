@@ -1154,13 +1154,18 @@ function MiniCard({ cardId, onClick, disabled, small, allowDetail }) {
   const cancelPress = () => {
     if (pressTimer.current) { clearTimeout(pressTimer.current); pressTimer.current = null; }
   };
-  const handleClick = () => {
-    if (longPressFired.current) { longPressFired.current = false; return; }
+  const handleClick = (e) => {
+    if (longPressFired.current) {
+      longPressFired.current = false;
+      e.stopPropagation();
+      return;
+    }
     if (!disabled && onClick) onClick();
   };
   const handleContextMenu = (e) => {
     if (!allowDetail) return;
     e.preventDefault();
+    e.stopPropagation();
     setShowDetail(true);
   };
 
@@ -1915,7 +1920,7 @@ function DeckBuilderScreen({ hero, initialDeck, onSave, onCancel }) {
             const deckFull = total >= 30;
             return (
               <div key={c.id} style={{ position: "relative" }} onClick={() => addCopy(c)}>
-                <MiniCard cardId={c.id} small disabled={atCap || deckFull} />
+                <MiniCard cardId={c.id} small disabled={atCap || deckFull} allowDetail />
                 {cnt > 0 && <div style={{ position: "absolute", top: -6, right: -6, background: "#000", color: "#fff", borderRadius: "50%", width: 18, height: 18, fontSize: 10, display: "flex", alignItems: "center", justifyContent: "center", fontFamily: FONT, border: "1px solid #fff" }}>{cnt}</div>}
               </div>
             );
