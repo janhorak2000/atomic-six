@@ -1444,36 +1444,13 @@ function currentMonthKey() {
   const d = new Date();
   return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}`;
 }
-function applyMatchResult(profile, won) {
-  const mk = currentMonthKey();
-  const sameMonth = profile.monthKey === mk;
-  const p = {
-    wins: profile.wins || 0, losses: profile.losses || 0,
-    winStreak: profile.winStreak || 0, lossStreak: profile.lossStreak || 0,
-    tier: profile.tier || "Bronze",
-    highestTier: profile.highestTier || profile.tier || "Bronze",
-    monthKey: mk,
-    monthWins: sameMonth ? (profile.monthWins || 0) : 0,
-    monthLosses: sameMonth ? (profile.monthLosses || 0) : 0,
-  };
-  if (won) {
-    p.wins += 1; p.monthWins += 1;
-    p.winStreak += 1; p.lossStreak = 0;
-    if (p.winStreak >= 5 && TIERS.indexOf(p.tier) < TIERS.length - 1) {
-      p.tier = TIERS[TIERS.indexOf(p.tier) + 1];
-      p.winStreak = 0;
-      if (TIERS.indexOf(p.tier) > TIERS.indexOf(p.highestTier)) p.highestTier = p.tier;
-    }
-  } else {
-    p.losses += 1; p.monthLosses += 1;
-    p.lossStreak += 1; p.winStreak = 0;
-    if (p.lossStreak >= 5 && TIERS.indexOf(p.tier) > 0) {
-      p.tier = TIERS[TIERS.indexOf(p.tier) - 1];
-      p.lossStreak = 0;
-    }
-  }
-  return p;
-}
+// NOTE: the function that used to live here (applyMatchResult, which turns
+// a win/loss into updated wins/tier/streaks) now runs ONLY server-side, in
+// functions/gameLogic.js, as part of the claimMatchReward Cloud Function -
+// see that file for the real logic (including the monthly tier reset). The
+// client no longer computes or writes tier/streak changes itself; it just
+// displays whatever the server last confirmed (myProfile, via the
+// onSnapshot listener below).
 // A player's displayed "this month" stats, adjusted for month rollover even
 // if they haven't played yet this month (so it never shows stale data).
 function monthStatsFor(profile) {
