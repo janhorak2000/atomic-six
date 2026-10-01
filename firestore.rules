@@ -1,7 +1,7 @@
 rules_version = '2';
 
 // Matches the actual collections used by src/App.jsx:
-//   users/{uid}                      - profile (add fields here as you build a leaderboard)
+//   users/{uid}                      - profile (bullets, unlocks, wins/losses, tier...)
 //   users/{uid}/decks/{hero}         - one doc per hero, { deck: [...30 card ids] }
 //   matchmakingQueue/{uid}           - one doc per waiting player, keyed by their own uid
 //   matches/{matchId}                - live match state, playerIds: [uid, uid]
@@ -11,7 +11,23 @@ service cloud.firestore {
 
     match /users/{userId} {
       allow read: if true; // public leaderboard needs to read everyone
-      allow write: if request.auth != null && request.auth.uid == userId;
+
+      // SECURITY BOUNDARY: this is the fix for the "anyone can set their own
+      // bullets to anything via devtools" hole. Every field that affects
+      // progress or currency - bullets, unlockedHeroes, unlockedCardIds,
+      // unlockedAll, wins, losses, winStreak, lossStreak, tier, highestTier,
+      // monthKey, monthWins, monthLosses, weeklyProgress, displayName, email -
+      // is now written ONLY by the Cloud Functions in functions/index.js,
+      // which use the Firebase Admin SDK and therefore never go through
+      // these rules at all. The client's normal Firestore SDK calls (what
+      // runs in the browser, what devtools can reach) are only ever allowed
+      // to touch the presence heartbeat's `lastSeen` timestamp - nothing
+      // that moves a number that matters.
+      allow create: if request.auth != null && request.auth.uid == userId &&
+        request.resource.data.keys().hasOnly(['lastSeen']);
+      allow update: if request.auth != null && request.auth.uid == userId &&
+        request.resource.data.diff(resource.data).affectedKeys().hasOnly(['lastSeen']);
+      allow delete: if false;
     }
 
     match /users/{userId}/decks/{hero} {
@@ -35,8 +51,15 @@ service cloud.firestore {
         request.auth.uid in resource.data.playerIds;
       allow create: if request.auth != null &&
         request.auth.uid in request.resource.data.playerIds;
+      // Players can keep updating match state (moves, turns) as before.
+      // The one exception is `rewardsClaimed`: that field is written only
+      // by the claimMatchReward Cloud Function (Admin SDK, bypasses these
+      // rules), so a client write that touches it is rejected here - that's
+      // what stops someone from marking their own match as "already
+      // claimed and paid out" by hand, or forging someone else's claim flag.
       allow update: if request.auth != null &&
-        request.auth.uid in resource.data.playerIds;
+        request.auth.uid in resource.data.playerIds &&
+        !('rewardsClaimed' in request.resource.data.diff(resource.data).affectedKeys());
     }
   }
 }
