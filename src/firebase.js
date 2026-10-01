@@ -9,7 +9,7 @@ import { initializeApp } from "firebase/app";
 import { getAuth, GoogleAuthProvider, signInWithPopup, signOut } from "firebase/auth";
 import { getFirestore } from "firebase/firestore";
 import { getFunctions } from "firebase/functions";
-import { initializeAppCheck, ReCaptchaV3Provider } from "firebase/app-check";
+import { initializeAppCheck, ReCaptchaEnterpriseProvider } from "firebase/app-check";
 
 const firebaseConfig = {
   apiKey: "AIzaSyBlzXtHpCfc22FKFK-u6IFnMFa55sLvwNk",
@@ -29,17 +29,20 @@ const app = initializeApp(firebaseConfig);
 // so without this, legitimate calls would start failing too - this has to
 // be set up for both sides to work together. Two things you must do in the
 // Firebase console before this does anything (see DEPLOYMENT_GUIDE.md):
-//   1. Register a reCAPTCHA v3 site key for this domain at
-//      https://www.google.com/recaptcha/admin and paste it below.
-//   2. In the Firebase console under Build → App Check, register this web
-//      app with that same site key, and enforce App Check for the
+//   1. Create a reCAPTCHA Enterprise "Web" key (score-based, NOT checkbox)
+//      for this domain at https://console.cloud.google.com/security/recaptcha
+//      and paste its key ID below. App Check registration in the Firebase
+//      console now asks for a reCAPTCHA Enterprise key, not the older
+//      standalone reCAPTCHA v3 admin console key.
+//   2. In the Firebase console under Security → App Check, register this
+//      web app with that same key, and enforce App Check for the
 //      "default" Cloud Functions codebase.
 // During local development (localhost), App Check needs a debug token -
 // DEPLOYMENT_GUIDE.md covers that too, since without it every function
 // call will fail locally once enforceAppCheck is live.
 // ----------------------------------------------------------------------
 initializeAppCheck(app, {
-  provider: new ReCaptchaV3Provider("6LfJh9ktAAAAAMUlFcQNtuuYpbzdmyI0pHQ6ufTf"),
+  provider: new ReCaptchaEnterpriseProvider("6LcFjtktAAAAAPDUwUke6EmqjkoQKNYokXjmBFNU"),
   isTokenAutoRefreshEnabled: true,
 });
 
