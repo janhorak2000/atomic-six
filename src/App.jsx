@@ -1253,8 +1253,8 @@ function MiniCard({ cardId, onClick, disabled, small, allowDetail }) {
           <WrapFitText text={c.name} width="100%" height={small ? 22 : 24} maxFontSize={small ? 9 : 10} minFontSize={5.5} duration={7} />
         </div>
       </div>
-      <div style={{ marginTop: 3, flexShrink: 0 }}><CardArt card={c} size={small ? 32 : 38} /></div>
-      {c.text && <div style={{ marginTop: 2, width: "100%", flexShrink: 0 }}><AutoScrollText text={c.text} height={small ? 46 : 56} fontSize={small ? 8 : 8.5} duration={10} bold /></div>}
+      <div style={{ marginTop: 1, flexShrink: 0 }}><CardArt card={c} size={small ? 36 : 48} /></div>
+      {c.text && <div style={{ marginTop: 1, width: "100%", flexShrink: 0 }}><AutoScrollText text={c.text} height={small ? 46 : 56} fontSize={small ? 8 : 8.5} duration={10} bold /></div>}
       <div style={{ marginTop: "auto", flexShrink: 0, display: "flex", justifyContent: "space-between", width: "100%", height: small ? 16 : 18 }}>
         {c.type === "spell" ? (
           <span style={{ margin: "auto", fontSize: small ? 8 : 9, fontWeight: 700, letterSpacing: 1 }}>ITEM</span>
@@ -1363,7 +1363,7 @@ function BoardMinion({ m, onClick, selected, targetable, isEnemy }) {
           {m.shielded && <div style={{ fontSize: 8, background: "#fff", border: "1px solid #000", padding: "0 3px", borderRadius: 3, whiteSpace: "nowrap" }}>SHIELD</div>}
           {m.keywords.includes("Taunt") && <div style={{ fontSize: 8, background: "#000", color: "#fff", padding: "0 3px", borderRadius: 3, whiteSpace: "nowrap" }}>TAUNT</div>}
         </div>
-        <CardArt card={m.cardId ? findCard(m.cardId) : { name: m.name, id: m.name }} size={40} />
+        <CardArt card={m.cardId ? findCard(m.cardId) : { name: m.name, id: m.name }} size={46} />
         <div style={{ fontSize: 7, textAlign: "center", marginTop: 1, lineHeight: 1.05, height: 15, overflow: "hidden" }}>{m.name}</div>
         {(m.frozen || m.keywords.includes("Toxic")) && (
           <div style={{ display: "flex", flexDirection: "column", alignItems: "center", gap: 1, marginTop: 1 }}>
