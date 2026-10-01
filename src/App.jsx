@@ -471,7 +471,7 @@ const NEUTRAL_CARDS = {
     { name: "Bio-Hazard Swarm", cost: 5, atk: 3, hp: 3, keywords: ["Charge"], text: "Charge. Deathrattle: Summon two Toxic Monkeys.", deathrattle: [{ type: "summon", cardName: "Toxic Monkey", count: 2 }] },
     { name: "Old World AI", cost: 7, atk: 6, hp: 8, text: "Battlecry: Gain 8 Armor.", effect: [{ type: "armor", amount: 8 }] },
     { name: "Fixer", cost: 5, atk: 2, hp: 5, keywords: ["Taunt"], text: "Taunt. Deathrattle: Summon a Street Hustler.", deathrattle: [{ type: "summon", cardName: "Street Hustler", count: 1 }] },
-    { name: "Signal Jammer", cost: 10, type: "spell", text: "Destroy all minions on the board.", effect: [{ type: "destroy", target: "allMinionsBoard" }] },
+    { name: "Mini Nuke", cost: 10, type: "spell", text: "Destroy all minions on the board.", effect: [{ type: "destroy", target: "allMinionsBoard" }] },
     { name: "Alpha Drunktard", cost: 5, atk: 2, hp: 8, text: "Heal 5 HP to your hero at the start of each of your turns. Deathrattle: Deal 6 damage to your own hero.", onTurnStart: [{ type: "heal", amount: 5, target: "ownHero" }], deathrattle: [{ type: "damage", amount: 6, target: "ownHero" }] },
     { name: "Gatling Gun", cost: 7, type: "spell", text: "Deal 6 damage to all enemies (minions and hero).", effect: [{ type: "damage", amount: 6, target: "allEnemyCharacters" }] },
     { name: "Field Medic Unit", cost: 5, atk: 3, hp: 5, text: "Battlecry: Restore 5 Health to your hero.", effect: [{ type: "heal", amount: 5, target: "ownHero" }] },
