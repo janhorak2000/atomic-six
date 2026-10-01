@@ -1,10 +1,21 @@
 import React, { useState, useEffect, useRef, useCallback } from "react";
-import { auth, db, signInWithGoogle, signOutUser } from "./firebase.js";
+import { auth, db, functions, signInWithGoogle, signOutUser } from "./firebase.js";
 import { onAuthStateChanged } from "firebase/auth";
 import {
   doc, getDoc, getDocFromServer, setDoc, deleteDoc, onSnapshot,
   collection, query, where, orderBy, limit, getDocs, runTransaction,
 } from "firebase/firestore";
+import { httpsCallable } from "firebase/functions";
+
+// Thin wrappers around the Cloud Functions in functions/index.js. These are
+// the ONLY way the client touches Bullets, unlocks, wins/losses or tier now
+// - see the big comment block at the top of that file for why.
+const callClaimMatchReward = httpsCallable(functions, "claimMatchReward");
+const callClaimFirstHero = httpsCallable(functions, "claimFirstHero");
+const callBuyHeroUnlock = httpsCallable(functions, "buyHeroUnlock");
+const callBuyCardUnlock = httpsCallable(functions, "buyCardUnlock");
+const callBuyUnlockAll = httpsCallable(functions, "buyUnlockAll");
+const callAdminGrantBullets = httpsCallable(functions, "adminGrantBullets");
 
 /* =========================================================================
    ATOMIC BUNCH - post-apocalyptic Hearthstone-style card game
@@ -1809,9 +1820,12 @@ function AdminGrantPanel() {
           out.push({ email, ok: false, reason: "no account found with this email" });
         } else {
           const docSnap = snap.docs[0];
-          const data = docSnap.data();
-          const ok = await fSet(["users", docSnap.id], { ...data, bullets: (data.bullets || 0) + amt });
-          out.push({ email, ok, reason: ok ? "" : "write failed" });
+          try {
+            await callAdminGrantBullets({ targetUid: docSnap.id, amount: amt });
+            out.push({ email, ok: true, reason: "" });
+          } catch (e) {
+            out.push({ email, ok: false, reason: (e && e.message) || "grant failed" });
+          }
         }
       } catch (e) {
         out.push({ email, ok: false, reason: String(e) });
@@ -2749,17 +2763,26 @@ export default function App() {
   const matchListenerRef = useRef(null); // holds the current onSnapshot unsubscribe function
   const pollIntervalRef = useRef(null); // backup poll alongside the live match listener
   const lastFailedStateRef = useRef(null);
-  const lastFailedProfileRef = useRef(null); // {uid, profile} if a match-result save failed, so it can be retried
+  const lastFailedProfileRef = useRef(null); // {uid, gameId} if a claimMatchReward call failed, so it can be retried
   const resultRecordedForRef = useRef(null); // gameId whose result we already recorded, so we never double-count
 
-  // Retry a match-result save that failed to persist (wins/losses/tier/quests/
-  // bullets) — this is what actually protects progress; without it, a failed
-  // write silently looked successful locally but never reached Firestore.
+  // Retry a match-result claim that failed to go through (wins/losses/tier/
+  // quests/bullets) — this is what actually protects progress; without it,
+  // a failed call silently looked fine locally but the server never heard
+  // about it. Safe to call repeatedly: claimMatchReward's own rewardsClaimed
+  // guard means a retry after a successful-but-unconfirmed call just
+  // returns the existing result instead of double-crediting.
   async function retryProfileSync() {
     if (!lastFailedProfileRef.current) return;
-    const { uid, profile } = lastFailedProfileRef.current;
-    const ok = await fSetVerified(["users", uid], profile, ["wins", "losses", "bullets"]);
-    if (ok) { lastFailedProfileRef.current = null; setProfileSyncError(false); }
+    const { gameId: failedGameId } = lastFailedProfileRef.current;
+    try {
+      const res = await callClaimMatchReward({ gameId: failedGameId });
+      if (res.data && res.data.profile) setMyProfile(res.data.profile);
+      lastFailedProfileRef.current = null;
+      setProfileSyncError(false);
+    } catch (e) {
+      console.error("retryProfileSync failed:", e);
+    }
   }
 
   // Background maintenance: retries a failed profile save, and every 10s
@@ -2931,34 +2954,44 @@ export default function App() {
     return () => { unsub(); clearTimeout(offlineFallback); };
   }, [sessionId]);
 
+  // All four of these now just ask a Cloud Function to do it (see
+  // functions/index.js). The function re-checks ownership and the real
+  // server-side Bullets balance itself before writing anything - the
+  // client's local `myProfile` numbers are only used here for the
+  // disabled-button / "can't afford it" UI, never trusted for the actual
+  // deduction. On success we optimistically adopt the function's returned
+  // profile so the UI updates instantly; the live onSnapshot listener will
+  // also confirm the same data moments later regardless.
   async function chooseFirstHero(hero) {
-    const bonusIds = randomNeutralBonusCardIds();
-    const profile = {
-      ...(myProfile || {}),
-      email: user.email || null,
-      displayName: user.displayName || "Player",
-      unlockedHeroes: [hero],
-      unlockedCardIds: bonusIds,
-      bullets: (myProfile && myProfile.bullets) || 0,
-    };
-    await fSet(["users", user.uid], profile);
+    try {
+      const res = await callClaimFirstHero({ hero });
+      if (res.data) setMyProfile(res.data);
+    } catch (e) {
+      console.error("claimFirstHero failed:", e);
+      setScreenNotice((e && e.message) || "Couldn't claim your first hero. Try again.");
+    }
   }
 
   async function buyUnlockAll() {
     if (!myProfile || (myProfile.bullets || 0) < UNLOCK_ALL_COST) return;
-    await fSet(["users", user.uid], { ...myProfile, unlockedAll: true, bullets: myProfile.bullets - UNLOCK_ALL_COST });
+    try {
+      const res = await callBuyUnlockAll();
+      if (res.data) setMyProfile((prev) => ({ ...prev, ...res.data }));
+    } catch (e) {
+      console.error("buyUnlockAll failed:", e);
+      setScreenNotice((e && e.message) || "Purchase failed. Try again.");
+    }
   }
 
   async function buyHeroUnlock(hero) {
     if (!myProfile || (myProfile.bullets || 0) < HERO_UNLOCK_COST || isHeroUnlocked(hero, myProfile)) return;
-    const bonusIds = randomNeutralBonusCardIds();
-    const existingCardIds = myProfile.unlockedCardIds || [];
-    await fSet(["users", user.uid], {
-      ...myProfile,
-      unlockedHeroes: [...(myProfile.unlockedHeroes || []), hero],
-      unlockedCardIds: [...existingCardIds, ...bonusIds],
-      bullets: myProfile.bullets - HERO_UNLOCK_COST,
-    });
+    try {
+      const res = await callBuyHeroUnlock({ hero });
+      if (res.data) setMyProfile((prev) => ({ ...prev, ...res.data }));
+    } catch (e) {
+      console.error("buyHeroUnlock failed:", e);
+      setScreenNotice((e && e.message) || "Purchase failed. Try again.");
+    }
   }
 
   async function buyCardUnlock(card) {
@@ -2966,71 +2999,43 @@ export default function App() {
     const cost = CARD_UNLOCK_COST[card.rarity] || 0;
     if ((myProfile.bullets || 0) < cost) return;
     if (isCardUnlocked(card, myProfile)) return;
-    await fSet(["users", user.uid], {
-      ...myProfile,
-      unlockedCardIds: [...(myProfile.unlockedCardIds || []), card.id],
-      bullets: myProfile.bullets - cost,
-    });
+    try {
+      const res = await callBuyCardUnlock({ cardId: card.id });
+      if (res.data) setMyProfile((prev) => ({ ...prev, ...res.data }));
+    } catch (e) {
+      console.error("buyCardUnlock failed:", e);
+      setScreenNotice((e && e.message) || "Purchase failed. Try again.");
+    }
   }
 
-  // Record match results exactly once per match. Both ranked tier/streak
-  // stats AND quest/bullet progress are ranked-matches-only — CPU games
-  // don't advance either. Computed from a single read and written in a
-  // single update, so there's no race between two effects overwriting the
-  // same profile independently.
+  // Record match results exactly once per match. This now hands the whole
+  // thing to the claimMatchReward Cloud Function instead of computing
+  // wins/tier/quests/bullets locally and writing them directly — the
+  // function reads the match doc and the player's own server-side profile
+  // itself and recomputes everything server-side, so nothing the client
+  // claims about the outcome or the reward is trusted. Both players call
+  // this independently for the same gameId; the function's own
+  // rewardsClaimed guard (see functions/index.js) makes that safe, and also
+  // makes retrying after a dropped connection safe (never double-credits).
   useEffect(() => {
     if (!gameState || gameState.winner === null || !user || isCpuMatch) return;
     if (resultRecordedForRef.current === gameId) return;
     resultRecordedForRef.current = gameId;
     (async () => {
-      const won = gameState.winner === myIdx;
-      const me = gameState.players[myIdx];
-      const opp = gameState.players[myIdx === 0 ? 1 : 0];
-      const existing = (await fGet(["users", user.uid])) || {};
-
-      let profile = applyMatchResult(existing, won);
-
-      let wp = { ...weeklyProgressFor(existing) };
-      wp.gamesPlayed += 1;
-      if (won) {
-        wp.wins += 1;
-        wp.heroDefeats = { ...wp.heroDefeats, [opp.hero]: (wp.heroDefeats[opp.hero] || 0) + 1 };
-      }
-      const ms = me.matchStats || {};
-      wp.neutralCardsPlayed += ms.neutralCardsPlayed || 0;
-      wp.epicCardsPlayed += ms.epicCardsPlayed || 0;
-      wp.uniqueCardsPlayed += ms.uniqueCardsPlayed || 0;
-      wp.armorGained += ms.armorGained || 0;
-      wp.healthRestored += ms.healthRestored || 0;
-      const mergedCardPlays = { ...wp.cardPlays };
-      Object.entries(ms.cardPlays || {}).forEach(([name, count]) => {
-        mergedCardPlays[name] = (mergedCardPlays[name] || 0) + count;
-      });
-      wp.cardPlays = mergedCardPlays;
-
-      const activeQuests = selectWeeklyQuests(wp.weekId);
-      const tierForQuests = profile.tier || existing.tier || "Bronze";
-      let bullets = existing.bullets || 0;
-      const claimed = new Set(wp.claimedQuestIds || []);
-      activeQuests.forEach((q) => {
-        if (claimed.has(q.id)) return;
-        if (questProgress(q, wp, tierForQuests).done) {
-          claimed.add(q.id);
-          bullets += QUEST_BULLET_REWARD;
-        }
-      });
-      wp.claimedQuestIds = Array.from(claimed);
-
-      profile = { ...profile, weeklyProgress: wp, bullets, displayName: user.displayName || "Player", email: user.email || null };
-      const ok = await fSetVerified(["users", user.uid], profile, ["wins", "losses", "bullets"]);
-      if (!ok) {
-        lastFailedProfileRef.current = { uid: user.uid, profile };
-        setProfileSyncError(true);
-      } else {
+      try {
+        const res = await callClaimMatchReward({ gameId });
+        if (res.data && res.data.profile) setMyProfile(res.data.profile);
         lastFailedProfileRef.current = null;
         setProfileSyncError(false);
+      } catch (e) {
+        console.error("claimMatchReward failed:", e);
+        // Let the existing retry loop (retryProfileSync, every 10s) keep
+        // trying — it just needs to know which match to retry, not a
+        // locally-computed profile anymore.
+        lastFailedProfileRef.current = { uid: user.uid, gameId };
+        setProfileSyncError(true);
+        resultRecordedForRef.current = null; // allow a retry to re-enter this effect
       }
-      setMyProfile(profile);
     })();
   }, [gameState?.winner, gameId, user, isCpuMatch, myIdx]);
 
