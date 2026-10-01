@@ -1795,7 +1795,7 @@ function guessCurrency() {
 // Replace with your real Google account email(s) before deploying. This
 // gates the UI only - see the deployment notes on why the Firestore rules
 // ALSO need updating for this to be a genuine security boundary.
-const ADMIN_EMAILS = ["YOUR_EMAIL_HERE@example.com"];
+const ADMIN_EMAILS = ["janhorak2000@gmail.com"];
 
 function AdminGrantPanel() {
   const [amount, setAmount] = useState("");
