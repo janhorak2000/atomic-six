@@ -12,12 +12,12 @@ import { getFunctions } from "firebase/functions";
 import { initializeAppCheck, ReCaptchaV3Provider } from "firebase/app-check";
 
 const firebaseConfig = {
-  apiKey: "PASTE_YOUR_API_KEY_HERE",
-  authDomain: "PASTE_YOUR_PROJECT_ID.firebaseapp.com",
-  projectId: "PASTE_YOUR_PROJECT_ID",
-  storageBucket: "PASTE_YOUR_PROJECT_ID.appspot.com",
-  messagingSenderId: "PASTE_YOUR_SENDER_ID",
-  appId: "PASTE_YOUR_APP_ID",
+  apiKey: "AIzaSyBlzXtHpCfc22FKFK-u6IFnMFa55sLvwNk",
+  authDomain: "atomic-six.firebaseapp.com",
+  projectId: "atomic-six",
+  storageBucket: "atomic-six.appspot.com",
+  messagingSenderId: "920582006710",
+  appId: "1:920582006710:web:2e18f196b3d7307bf6c317",
 };
 
 const app = initializeApp(firebaseConfig);
