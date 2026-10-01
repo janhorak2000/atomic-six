@@ -39,7 +39,7 @@ const app = initializeApp(firebaseConfig);
 // call will fail locally once enforceAppCheck is live.
 // ----------------------------------------------------------------------
 initializeAppCheck(app, {
-  provider: new ReCaptchaV3Provider("PASTE_YOUR_RECAPTCHA_V3_SITE_KEY"),
+  provider: new ReCaptchaV3Provider("6LfJh9ktAAAAAMUlFcQNtuuYpbzdmyI0pHQ6ufTf"),
   isTokenAutoRefreshEnabled: true,
 });
 
