@@ -70,11 +70,26 @@ function currentMonthKey() {
 function applyMatchResult(profile, won) {
   const mk = currentMonthKey();
   const sameMonth = profile.monthKey === mk;
+  // seasonKey is deliberately separate from monthKey: it's what actually
+  // gates the tier/streak reset below, independent of whatever monthKey
+  // already holds. A profile that somehow has monthKey == this month but
+  // no seasonKey yet (e.g. every account that existed before this reset
+  // was added) still gets exactly one reset on its very next match, which
+  // is what self-heals the "still showing last month's streak" bug rather
+  // than requiring it to be fixed by hand per account.
+  const sameSeason = profile.seasonKey === mk;
   const p = {
     wins: profile.wins || 0, losses: profile.losses || 0,
-    winStreak: profile.winStreak || 0, lossStreak: profile.lossStreak || 0,
-    tier: profile.tier || "Bronze",
+    // New month = new season: tier and both streaks go back to the very
+    // start (Bronze, 0 wins needed toward a streak) no matter where last
+    // month left off. highestTier is the one permanent record here - it's
+    // never touched by this reset, so "best tier ever reached" survives
+    // even as the current season resets underneath it.
+    winStreak: sameSeason ? (profile.winStreak || 0) : 0,
+    lossStreak: sameSeason ? (profile.lossStreak || 0) : 0,
+    tier: sameSeason ? (profile.tier || "Bronze") : "Bronze",
     highestTier: profile.highestTier || profile.tier || "Bronze",
+    seasonKey: mk,
     monthKey: mk,
     monthWins: sameMonth ? (profile.monthWins || 0) : 0,
     monthLosses: sameMonth ? (profile.monthLosses || 0) : 0,
