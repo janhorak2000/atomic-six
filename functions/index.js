@@ -63,7 +63,7 @@ const db = getFirestore();
 // controls whether the Shop UI SHOWS the admin panel to someone; this list
 // is what actually lets a grant go through. Replace the placeholder with
 // your real Google account email before deploying.
-const ADMIN_EMAILS = ["YOUR_EMAIL_HERE@example.com"];
+const ADMIN_EMAILS = ["janhorak2000@gmail.com"];
 
 function requireAuth(request) {
   if (!request.auth || !request.auth.uid) {
