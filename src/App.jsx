@@ -939,8 +939,10 @@ function startTurn(state) {
   p.powerUsed = false;
   state.turnStartedAt = Date.now();
   p.board.forEach((m) => {
-    if (m.frozen) { m.frozen = false; m.canAttack = false; }
-    else m.canAttack = true;
+    // `frozenSkip` marks "this is the turn the freeze makes it miss" - purely so
+    // the ice stays on screen until that turn is over (see isFrozenNow).
+    if (m.frozen) { m.frozen = false; m.canAttack = false; m.frozenSkip = true; }
+    else { m.canAttack = true; m.frozenSkip = false; }
   });
   // Toxic: 2 damage at the start of its controller's turn, stacking down
   // toward death. Uses the normal damage path (so Shield still blocks a
@@ -1203,12 +1205,14 @@ function WrapFitText({ text, width, height, maxFontSize, minFontSize = 5.5, dura
 }
 
 /* =========================================================================
-   DISPLAY SETTINGS — three ways to draw the same game.
+   DISPLAY SETTINGS — four ways to draw the same game.
      "notepad" : the original black & white notepad look, with card art.
      "noart"   : the notepad look with every picture removed (cards are
                  plain shapes with text) and no win/lose clip at match end.
      "deluxe"  : "Full Graphics" - colourful card faces, 3D animations,
-                 ice / toxic effects and an illustrated board.
+                 ice / toxic / blood effects, illustrated boards and menus.
+     "pixel"   : "Pixel Art" - the Full Graphics table redrawn as chunky
+                 256-colour pixel art, with a pixel font and pixel gore.
    The choice is purely visual and is remembered per browser/device in
    localStorage. It is deliberately NOT saved to the player's Firestore
    profile: firestore.rules only lets the client write `lastSeen`, and a
@@ -1218,51 +1222,61 @@ function WrapFitText({ text, width, height, maxFontSize, minFontSize = 5.5, dura
 const DISPLAY_MODES = [
   { id: "notepad", name: "Notepad Style with Arts", desc: "The classic black & white notepad look, with card pictures." },
   { id: "noart", name: "Notepad Style without Arts", desc: "Card shapes and text only. No pictures, and no win animation at the end of a match." },
-  { id: "deluxe", name: "Full Graphics", desc: "Colourful cards, big art, 3D animations, ice and toxic effects, and illustrated boards." },
+  { id: "deluxe", name: "Full Graphics", desc: "Colourful cards, big art, 3D animations, ice, toxic and blood effects, and illustrated boards." },
+  { id: "pixel", name: "Pixel Art", desc: "Everything redrawn as chunky 256-colour pixel art, old-school wasteland style, with pixel blood." },
 ];
+// The table you play on in Full Graphics / Pixel Art. One is picked at random for every match.
 const BOARD_STYLES = [
-  { id: "rustyard", name: "Rust Yard", desc: "Riveted scrap plates, eaten by rust.", accent: "#e8873a" },
-  { id: "bunker", name: "Bunker Floor", desc: "Cold concrete and hazard stripes.", accent: "#e6c229" },
-  { id: "swamp", name: "Toxic Swamp", desc: "Glowing sludge and dead roots.", accent: "#8dff4a" },
-  { id: "highway", name: "Scorched Highway", desc: "Cracked asphalt under a burning sky.", accent: "#ff7a3d" },
-  { id: "reactor", name: "Reactor Core", desc: "Dark steel lit by a leaking reactor.", accent: "#3fe0ff" },
-  { id: "dustbowl", name: "Dust Bowl", desc: "Sun-bleached, cracked earth.", accent: "#ffd08a" },
+  { id: "rustyard", name: "Rust Yard", accent: "#e8873a" },
+  { id: "bunker", name: "Bunker Floor", accent: "#e6c229" },
+  { id: "swamp", name: "Toxic Swamp", accent: "#8dff4a" },
+  { id: "highway", name: "Scorched Highway", accent: "#ff7a3d" },
+  { id: "reactor", name: "Reactor Core", accent: "#3fe0ff" },
+  { id: "dustbowl", name: "Dust Bowl", accent: "#ffd08a" },
 ];
 const DISPLAY_STORAGE_KEY = "atomicBunch.display.v1";
-const DEFAULT_DISPLAY = { mode: "notepad", board: "rustyard" };
+const DEFAULT_DISPLAY = { mode: "notepad" };
 function loadDisplaySettings() {
   try {
     const raw = window.localStorage.getItem(DISPLAY_STORAGE_KEY);
     if (!raw) return { ...DEFAULT_DISPLAY };
     const p = JSON.parse(raw) || {};
-    return {
-      mode: DISPLAY_MODES.some((m) => m.id === p.mode) ? p.mode : DEFAULT_DISPLAY.mode,
-      board: BOARD_STYLES.some((b) => b.id === p.board) ? p.board : DEFAULT_DISPLAY.board,
-    };
+    return { mode: DISPLAY_MODES.some((m) => m.id === p.mode) ? p.mode : DEFAULT_DISPLAY.mode };
   } catch (e) {
     return { ...DEFAULT_DISPLAY };
   }
 }
 function saveDisplaySettings(s) {
-  try { window.localStorage.setItem(DISPLAY_STORAGE_KEY, JSON.stringify({ mode: s.mode, board: s.board })); } catch (e) {}
+  try { window.localStorage.setItem(DISPLAY_STORAGE_KEY, JSON.stringify({ mode: s.mode })); } catch (e) {}
 }
 const DisplayContext = React.createContext({ ...DEFAULT_DISPLAY, setDisplay: () => {} });
 function useDisplay() { return React.useContext(DisplayContext); }
+// "Themed" = the two graphical styles, which share one table layout and one set of menus.
+function isThemedMode(mode) { return mode === "deluxe" || mode === "pixel"; }
+function dxRootClass(mode) { return mode === "pixel" ? "dx-root dx-skin-pixel" : "dx-root"; }
+
+// A frozen minion skips its controller's next turn. The engine clears `frozen`
+// when that turn starts and sets `frozenSkip` for the turn being skipped, so
+// the ice stays visible for as long as the minion really can't act.
+function isFrozenNow(m) { return !!(m && (m.frozen || m.frozenSkip)); }
 
 /* =========================================================================
-   FULL GRAPHICS ("deluxe") — look & feel
-   Everything below is drawn with CSS and inline SVG only: no extra image
-   files, no web fonts and no network requests, so App.jsx stays the single
-   file to upload. Class names all start with "dx-".
+   FULL GRAPHICS + PIXEL ART — look & feel
+   Everything below is drawn with CSS, inline SVG and small generated
+   canvases only: no extra image files and no network requests, so App.jsx
+   stays the single file to upload. Class names start with "dx-" (the match
+   table and cards) or "fx-" (the menus).
    ========================================================================= */
 const DX_FONT = `"Segoe UI", system-ui, -apple-system, "Roboto", "Helvetica Neue", Arial, sans-serif`;
 const DX_DISPLAY_FONT = `"Bahnschrift", "DIN Alternate", "Avenir Next Condensed", "Roboto Condensed", "Arial Narrow", "Segoe UI", system-ui, sans-serif`;
+const DX_THIN_FONT = `"Segoe UI Light", "Segoe UI", "Helvetica Neue", Helvetica, "Roboto", system-ui, sans-serif`;
+const DX_PIXEL_FONT = `"AtomicPixel", "Lucida Console", "Courier New", monospace`;
 
 const DX_RARITY = {
-  common: { frame: "linear-gradient(155deg,#c3c7ce 0%,#787d86 34%,#3d4148 68%,#959aa3 100%)", edge: "#d5d9df", glow: "rgba(200,205,215,0.55)", gem: "#c9ced6", label: "Common" },
-  rare: { frame: "linear-gradient(155deg,#9fcbff 0%,#2f6fe0 34%,#12327d 68%,#5d9bf5 100%)", edge: "#a9d0ff", glow: "rgba(70,140,255,0.75)", gem: "#4b93ff", label: "Rare" },
-  epic: { frame: "linear-gradient(155deg,#e2b3ff 0%,#9440e0 34%,#431378 68%,#b56df5 100%)", edge: "#e3bdff", glow: "rgba(170,80,255,0.75)", gem: "#b45cff", label: "Epic" },
-  unique: { frame: "linear-gradient(155deg,#fff3b5 0%,#e8b02c 34%,#8a5a0a 68%,#ffd75e 100%)", edge: "#fff2b8", glow: "rgba(255,200,60,0.85)", gem: "#ffc93c", label: "Unique" },
+  common: { frame: "linear-gradient(155deg,#c3c7ce 0%,#787d86 34%,#3d4148 68%,#959aa3 100%)", solid: "#8a8f98", edge: "#d5d9df", glow: "rgba(200,205,215,0.55)", gem: "#d3d8df", label: "Common" },
+  rare: { frame: "linear-gradient(155deg,#9fcbff 0%,#2f6fe0 34%,#12327d 68%,#5d9bf5 100%)", solid: "#2f6fe0", edge: "#a9d0ff", glow: "rgba(70,140,255,0.75)", gem: "#58a2ff", label: "Rare" },
+  epic: { frame: "linear-gradient(155deg,#e2b3ff 0%,#9440e0 34%,#431378 68%,#b56df5 100%)", solid: "#8a3ad8", edge: "#e3bdff", glow: "rgba(170,80,255,0.75)", gem: "#c070ff", label: "Epic" },
+  unique: { frame: "linear-gradient(155deg,#fff3b5 0%,#e8b02c 34%,#8a5a0a 68%,#ffd75e 100%)", solid: "#d9a520", edge: "#fff2b8", glow: "rgba(255,200,60,0.85)", gem: "#ffcf40", label: "Unique" },
 };
 const DX_FACTION = {
   Wanderer: { c: "#e89c4c", dark: "#3d2512" },
@@ -1298,9 +1312,22 @@ const DELUXE_STYLE = `
 .dx-panel { background: linear-gradient(180deg,rgba(38,36,34,0.94),rgba(18,17,16,0.96)); border: 2px solid #0b0b0b; border-radius: 14px;
   box-shadow: inset 0 0 0 1px rgba(255,255,255,0.09), inset 0 1px 0 rgba(255,255,255,0.18), 0 10px 26px rgba(0,0,0,0.55); }
 
+/* ---- AP dots ---- */
+.dx-dot { border-radius: 50%; flex-shrink: 0; background: rgba(255,255,255,0.07); border: 1.5px solid rgba(255,255,255,0.12); }
+.dx-dot-socket { background: #10301d; border-color: #1d5a36; }
+.dx-dot-on { background: radial-gradient(circle at 35% 30%,#e3ffec,#3be07a 45%,#0d7a38); border-color: #05301a; box-shadow: 0 0 8px rgba(70,255,140,0.85); }
+
 /* ---- card face ---- */
-.dx-card { position: relative; transform-style: preserve-3d; transition: transform 0.12s ease-out, filter 0.2s; transform: perspective(900px) rotateX(var(--dx-rx,0deg)) rotateY(var(--dx-ry,0deg)); }
-.dx-card-frame { position: absolute; inset: 0; border-radius: 16px; padding: 8px; box-shadow: 0 1px 0 rgba(255,255,255,0.5) inset, 0 -2px 0 rgba(0,0,0,0.4) inset, 0 10px 22px rgba(0,0,0,0.55), 0 2px 4px rgba(0,0,0,0.5); }
+.dx-card { position: relative; transform-style: preserve-3d; transition: transform 0.12s ease-out, filter 0.2s; }
+.dx-card-frame { position: absolute; inset: 0; border-radius: 16px; padding: 8px; background: var(--rf); box-shadow: 0 1px 0 rgba(255,255,255,0.5) inset, 0 -2px 0 rgba(0,0,0,0.4) inset, 0 10px 22px rgba(0,0,0,0.55), 0 2px 4px rgba(0,0,0,0.5); }
+.dx-card-inner { position: relative; width: 100%; height: 100%; border-radius: 10px; overflow: hidden; background: linear-gradient(180deg,var(--fd) 0%,#141312 100%); box-shadow: inset 0 0 0 2px rgba(0,0,0,0.65); }
+.dx-card-art { position: absolute; left: 6px; right: 6px; top: 6px; height: 150px; border-radius: 7px; overflow: hidden; background: #000; }
+.dx-card-art::after { content: ""; position: absolute; inset: 0; box-shadow: inset 0 0 0 2px rgba(0,0,0,0.7), inset 0 0 22px rgba(0,0,0,0.6); pointer-events: none; }
+.dx-card-name { position: absolute; left: 0; right: 0; top: 146px; height: 36px; padding: 0 10px; background: linear-gradient(180deg,#3a3a40,#17171a); border-top: 2px solid var(--re); border-bottom: 2px solid var(--re); box-shadow: 0 3px 6px rgba(0,0,0,0.6);
+  font-family: ${DX_DISPLAY_FONT}; font-stretch: condensed; text-transform: uppercase; letter-spacing: 0.03em; }
+.dx-card-text { position: absolute; left: 8px; right: 8px; top: 188px; height: 84px; border-radius: 6px; padding: 4px 7px; background: linear-gradient(180deg,#f1e8d1,#d8caa6); box-shadow: inset 0 0 0 1px rgba(60,40,10,0.5), inset 0 2px 8px rgba(60,40,10,0.35); }
+.dx-card-text-item { height: 96px; }
+.dx-card-foot { position: absolute; left: 0; right: 0; bottom: 4px; display: flex; flex-direction: column; align-items: center; gap: 1px; font-family: ${DX_DISPLAY_FONT}; font-stretch: condensed; font-size: 11.5px; font-weight: 700; letter-spacing: 0.12em; text-transform: uppercase; color: var(--fc); line-height: 1.1; }
 .dx-card-glare { position: absolute; inset: 0; border-radius: 16px; pointer-events: none; opacity: var(--dx-glare,0); transition: opacity 0.2s;
   background: radial-gradient(circle at var(--dx-gx,50%) var(--dx-gy,30%), rgba(255,255,255,0.42), rgba(255,255,255,0) 55%); mix-blend-mode: screen; }
 .dx-card-dim { filter: brightness(0.62) saturate(0.55); }
@@ -1308,10 +1335,13 @@ const DELUXE_STYLE = `
 .dx-badge-cost { border-radius: 50%; border: 3px solid #05301a; background: radial-gradient(circle at 34% 28%,#d6ffe3 0%,#3be07a 38%,#0d7a38 78%,#064a21 100%); box-shadow: 0 0 12px rgba(70,255,140,0.7), 0 3px 5px rgba(0,0,0,0.6); }
 .dx-badge-atk { border-radius: 50%; border: 3px solid #4a2600; background: radial-gradient(circle at 34% 28%,#fff3c2 0%,#ffb31f 40%,#c96a00 80%,#7a3d00 100%); box-shadow: 0 3px 5px rgba(0,0,0,0.6); }
 .dx-badge-hp { border-radius: 50% 50% 50% 50% / 38% 38% 62% 62%; border: 3px solid #4d0a06; background: radial-gradient(circle at 34% 28%,#ffd0c9 0%,#ef3b2c 40%,#a3150b 80%,#5e0803 100%); box-shadow: 0 3px 5px rgba(0,0,0,0.6); }
+.dx-badge-armor { border-radius: 22% 22% 50% 50% / 18% 18% 62% 62%; border: 3px solid #1c2026; background: radial-gradient(circle at 34% 28%,#f4f7fa,#9aa5b1 45%,#4d5661); }
 
 /* ---- hand ---- */
-.dx-handcard { position: absolute; bottom: 0; transform-origin: 50% 100%; transform: translateY(var(--ty,0px)) rotate(var(--rot,0deg)); transition: transform 0.18s cubic-bezier(.2,.8,.2,1), left 0.25s; animation: dxDraw 0.5s cubic-bezier(.2,.8,.2,1) backwards; cursor: pointer; }
-@media (hover: hover) { .dx-handcard:hover { transform: translateY(var(--lift,-60px)) scale(var(--hs,1.25)) rotate(0deg); z-index: 80 !important; } }
+.dx-handcard { position: absolute; bottom: var(--rest,0px); transform-origin: 50% 100%; transform: translateY(var(--ty,0px)) rotate(var(--rot,0deg)); transition: transform 0.18s cubic-bezier(.2,.8,.2,1), left 0.25s, bottom 0.24s cubic-bezier(.2,.8,.2,1); animation: dxDraw 0.5s cubic-bezier(.2,.8,.2,1) backwards; cursor: pointer; }
+.dx-hand-up .dx-handcard { bottom: var(--up,18px); }
+@media (hover: hover) { .dx-hand-hover .dx-handcard:hover { transform: translateY(var(--lift,-14px)) scale(var(--hs,1.25)) rotate(0deg); z-index: 80 !important; } }
+.dx-handcard.dx-focus { transform: translateY(var(--lift,-14px)) scale(var(--hs,1.25)) rotate(0deg); z-index: 81 !important; }
 .dx-playable .dx-card-frame { animation: dxPlayable 1.5s ease-in-out infinite; }
 @keyframes dxPlayable { 0%,100% { box-shadow: 0 0 0 3px #7dff9a, 0 0 14px 3px rgba(80,255,130,0.55), 0 10px 22px rgba(0,0,0,0.55); } 50% { box-shadow: 0 0 0 3px #c9ffd6, 0 0 26px 8px rgba(80,255,130,0.85), 0 10px 22px rgba(0,0,0,0.55); } }
 @keyframes dxDraw { 0% { opacity: 0; transform: translate(260px,-120px) rotateY(85deg) rotate(18deg) scale(0.7); } 100% { opacity: 1; } }
@@ -1319,18 +1349,21 @@ const DELUXE_STYLE = `
 /* ---- board minions ---- */
 .dx-slot { position: relative; flex-shrink: 0; transition: width 0.25s, height 0.25s; }
 .dx-minion { position: absolute; left: 0; top: 0; transform-origin: 0 0; }
+.dx-minion-hit { position: absolute; inset: 0; transform-style: preserve-3d; }
 .dx-minion-body { position: absolute; inset: 0; transform-style: preserve-3d; transition: transform 0.18s cubic-bezier(.2,.8,.2,1), filter 0.25s; animation: dxSummon 0.55s cubic-bezier(.2,.9,.25,1) backwards; }
-.dx-minion-frame { position: absolute; inset: 0; border-radius: 13px; padding: 5px; box-shadow: 0 1px 0 rgba(255,255,255,0.55) inset, 0 8px 14px rgba(0,0,0,0.6), 0 2px 3px rgba(0,0,0,0.6); }
+.dx-minion-frame { position: absolute; inset: 0; border-radius: 13px; padding: 5px; background: var(--rf); box-shadow: 0 1px 0 rgba(255,255,255,0.55) inset, 0 8px 14px rgba(0,0,0,0.6), 0 2px 3px rgba(0,0,0,0.6); }
 .dx-minion-taunt .dx-minion-frame { box-shadow: 0 0 0 4px #aeb6c0, 0 0 0 7px #23272c, 0 0 0 8px rgba(255,255,255,0.25), 0 10px 16px rgba(0,0,0,0.65); border-radius: 13px 13px 30px 30px; }
 .dx-minion-taunt .dx-minion-art { border-radius: 9px 9px 25px 25px; }
 .dx-minion-art { position: absolute; inset: 5px; border-radius: 9px; overflow: hidden; background: #111; }
 .dx-minion-art::after { content: ""; position: absolute; inset: 0; background: linear-gradient(180deg,rgba(0,0,0,0) 45%,rgba(0,0,0,0.88) 100%); box-shadow: inset 0 0 0 2px rgba(0,0,0,0.55), inset 0 0 18px rgba(0,0,0,0.55); }
+.dx-minion-name { position: absolute; left: 30px; right: 30px; bottom: 9px; text-align: center; font-family: ${DX_DISPLAY_FONT}; font-stretch: condensed; font-weight: 700; font-size: 13px; line-height: 1.05; text-transform: uppercase; letter-spacing: 0.02em; color: #fff; text-shadow: 0 1px 2px #000, 0 0 6px #000; max-height: 42px; overflow: hidden; }
+.dx-taunt-tab { position: absolute; left: 50%; top: -15px; transform: translateX(-50%); display: flex; align-items: center; gap: 3px; padding: 2px 8px 2px 5px; border-radius: 8px; background: linear-gradient(180deg,#d7dde4,#7c858f); border: 2px solid #1b1e22; font-family: ${DX_DISPLAY_FONT}; font-weight: 800; font-size: 12px; letter-spacing: 0.08em; color: #14171a; box-shadow: 0 2px 4px rgba(0,0,0,0.6); z-index: 14; white-space: nowrap; }
+.dx-chip { width: 26px; height: 26px; border-radius: 50%; border: 2px solid #0d0d0d; display: flex; align-items: center; justify-content: center; box-shadow: 0 2px 4px rgba(0,0,0,0.6); }
 .dx-spent .dx-minion-body { filter: saturate(0.45) brightness(0.72); }
 .dx-ready .dx-minion-frame { animation: dxReady 1.4s ease-in-out infinite; }
 .dx-selected .dx-minion-body { transform: translateY(-16px) translateZ(60px) scale(1.1); }
 .dx-selected .dx-minion-frame { box-shadow: 0 0 0 4px #ffe27a, 0 0 28px 10px rgba(255,210,70,0.9), 0 26px 26px rgba(0,0,0,0.55); animation: none; }
 .dx-targetable .dx-minion-frame, .dx-hero-targetable { animation: dxTarget 0.9s ease-in-out infinite; }
-.dx-minion-hit { position: absolute; inset: 0; transform-style: preserve-3d; }
 .dx-hit .dx-minion-hit, .dx-hero-hit { animation: dxHit 0.45s; }
 @keyframes dxReady { 0%,100% { box-shadow: 0 0 0 2px #7dff9a, 0 0 10px 2px rgba(80,255,130,0.5), 0 8px 14px rgba(0,0,0,0.6); } 50% { box-shadow: 0 0 0 3px #c9ffd6, 0 0 20px 6px rgba(80,255,130,0.85), 0 8px 14px rgba(0,0,0,0.6); } }
 @keyframes dxTarget { 0%,100% { box-shadow: 0 0 0 3px #ff5a48, 0 0 10px 2px rgba(255,70,50,0.6), 0 8px 14px rgba(0,0,0,0.6); } 50% { box-shadow: 0 0 0 5px #ffb0a6, 0 0 24px 8px rgba(255,70,50,0.95), 0 8px 14px rgba(0,0,0,0.6); } }
@@ -1354,6 +1387,14 @@ const DELUXE_STYLE = `
 .dx-ember { position: absolute; left: 50%; top: 55%; width: 9px; height: 9px; border-radius: 50%; background: radial-gradient(circle,#fff6c9,#ff9a2e 55%,rgba(255,60,0,0)); animation: dxEmber 0.95s ease-out forwards; }
 @keyframes dxEmber { 0% { transform: translate(0,0) scale(1); opacity: 1; } 100% { transform: translate(var(--ex), var(--ey)) scale(0.2); opacity: 0; } }
 
+/* ---- blood: splatters land on the table and stay there for a while ---- */
+.dx-decals { position: absolute; inset: 0; pointer-events: none; z-index: 2; }
+.dx-decal { position: absolute; transform: translate(-50%,-50%); animation: dxSplatIn 0.3s cubic-bezier(.2,1.5,.4,1) backwards, dxSplatOut 5s ease-in var(--life,20s) forwards; }
+@keyframes dxSplatIn { 0% { transform: translate(-50%,-50%) scale(0.12); opacity: 0; } 100% { transform: translate(-50%,-50%) scale(1); opacity: 1; } }
+@keyframes dxSplatOut { 100% { opacity: 0; } }
+.dx-droplet { position: absolute; left: 50%; top: 50%; width: 11px; height: 11px; border-radius: 50% 50% 50% 8%; background: radial-gradient(circle at 35% 30%,#f04a3a,#8a0a0a 60%,#4a0303); animation: dxDroplet 0.6s cubic-bezier(.15,.7,.45,1) forwards; }
+@keyframes dxDroplet { 0% { transform: translate(-50%,-50%) scale(1.3); opacity: 1; } 80% { opacity: 1; } 100% { transform: translate(calc(-50% + var(--bx)), calc(-50% + var(--by))) scale(0.35); opacity: 0; } }
+
 /* ---- frozen: a block of ice grows over the card ---- */
 .dx-ice { position: absolute; inset: -9px -9px -22px -9px; pointer-events: none; z-index: 12; animation: dxIceIn 0.55s cubic-bezier(.2,.9,.3,1.2) backwards; filter: drop-shadow(0 0 8px rgba(140,215,255,0.85)); }
 @keyframes dxIceIn { 0% { opacity: 0; transform: scale(1.35); filter: brightness(3) drop-shadow(0 0 20px #fff); } 100% { opacity: 1; transform: scale(1); } }
@@ -1371,7 +1412,7 @@ const DELUXE_STYLE = `
 .dx-bubble { transform-box: fill-box; transform-origin: 50% 50%; animation: dxBubble 2.2s ease-in infinite; }
 @keyframes dxBubble { 0% { transform: translateY(0) scale(0.3); opacity: 0; } 15% { opacity: 0.95; } 80% { opacity: 0.9; } 100% { transform: translateY(-215px) scale(1.25); opacity: 0; } }
 .dx-toxic .dx-minion-frame { animation: dxToxicGlow 1.8s ease-in-out infinite; }
-.dx-toxic.dx-ready .dx-minion-frame, .dx-toxic.dx-targetable .dx-minion-frame { animation-name: dxReady; }
+.dx-toxic.dx-ready .dx-minion-frame { animation-name: dxReady; }
 .dx-toxic.dx-targetable .dx-minion-frame { animation-name: dxTarget; }
 .dx-selected.dx-toxic .dx-minion-frame { animation: none; }
 @keyframes dxToxicGlow { 0%,100% { box-shadow: 0 0 0 2px #4fbf1c, 0 0 12px 3px rgba(110,255,40,0.5), 0 8px 14px rgba(0,0,0,0.6); } 50% { box-shadow: 0 0 0 2px #b6ff3c, 0 0 24px 8px rgba(110,255,40,0.85), 0 8px 14px rgba(0,0,0,0.6); } }
@@ -1382,6 +1423,7 @@ const DELUXE_STYLE = `
 @keyframes dxShield { 0%,100% { opacity: 0.8; transform: scale(1); } 50% { opacity: 1; transform: scale(1.03); } }
 
 /* ---- board, banners, reveal ---- */
+.dx-mat { border-radius: 22px; background: rgba(0,0,0,0.22); border: 3px solid rgba(0,0,0,0.6); box-shadow: inset 0 0 0 2px var(--accent-soft,rgba(255,255,255,0.2)), inset 0 0 60px rgba(0,0,0,0.55), 0 12px 30px rgba(0,0,0,0.5); }
 .dx-mat3d { transform: perspective(1900px) rotateX(5deg); transform-origin: 50% 62%; }
 .dx-pulse { animation: dxPulse 3.5s ease-in-out infinite; }
 @keyframes dxPulse { 0%,100% { opacity: 0.55; } 50% { opacity: 1; } }
@@ -1395,13 +1437,99 @@ const DELUXE_STYLE = `
 @keyframes dxPop { 0% { transform: scale(0.75) translateY(30px); opacity: 0; } 100% { transform: none; opacity: 1; } }
 .dx-endturn-ready { animation: dxEndTurn 1.6s ease-in-out infinite; }
 @keyframes dxEndTurn { 0%,100% { filter: brightness(1); } 50% { filter: brightness(1.22); } }
-.dx-title3d { animation: dxTitle 0.9s cubic-bezier(.2,.9,.3,1.2) backwards; }
-@keyframes dxTitle { 0% { transform: perspective(700px) rotateX(80deg) translateY(-80px) scale(1.6); opacity: 0; } 100% { transform: perspective(700px) rotateX(0) translateY(0) scale(1); opacity: 1; } }
+/* end-of-match title: thin, wide, quiet */
+.dx-endtitle { font-family: ${DX_THIN_FONT}; font-weight: 200; text-transform: uppercase; letter-spacing: 0.42em; margin-right: -0.42em; line-height: 1; white-space: nowrap; animation: dxEndTitle 1.5s cubic-bezier(.2,.7,.2,1) backwards; }
+@keyframes dxEndTitle { 0% { letter-spacing: 1.1em; margin-right: -1.1em; opacity: 0; filter: blur(8px); } 100% { letter-spacing: 0.42em; margin-right: -0.42em; opacity: 1; filter: blur(0); } }
+.dx-endrule { height: 1px; width: 0; margin: 0 auto; animation: dxEndRule 1.1s 0.5s ease-out forwards; }
+@keyframes dxEndRule { 100% { width: 150px; } }
 .dx-scroll::-webkit-scrollbar { width: 8px; height: 8px; } .dx-scroll::-webkit-scrollbar-thumb { background: rgba(255,255,255,0.25); border-radius: 4px; }
 @media (prefers-reduced-motion: reduce) {
   .dx-root *, .dx-root *::after { animation-duration: 0.01s !important; animation-iteration-count: 1 !important; transition-duration: 0.01s !important; }
+  .dx-root .dx-decal { animation-duration: 0.01s, 5s !important; }
   .dx-mat3d { transform: none; }
 }
+`;
+
+/* ---------- Pixel Art: the same table, re-skinned. The font is a tiny
+   hand-drawn 5x7 pixel face generated for this game and embedded below
+   (about 3 KB), so no font is downloaded from anywhere. ---------- */
+const DX_PIXEL_FONT_B64 = "d09GRgABAAAAAAsUAAoAAAAAKBwAAQAAAAAAAAAAAAAAAAAAAAAAAAAAAABPUy8yAAABZAAAADkAAABgCJPzXGNtYXAAAAHgAAABiwAAAvRF4RZLZ2x5ZgAABAwAAAWDAAAezowUy3BoZWFkAAAA9AAAADYAAAA2MFsYZmhoZWEAAAEsAAAAHgAAACQG2AQxaG10eAAAAaAAAAA9AAABLriSAABsb2NhAAADbAAAAKAAAACgUpZZzG1heHAAAAFMAAAAGAAAACAAYABCbmFtZQAACZAAAABbAAAAbKWg9hJwb3N0AAAJ7AAAAScAAAKUaHtiNQABAAAAAQAATtTfH18PPPUAAwPoAAAAAObsakwAAAAA5uxqTAAA/4MDawNrAAAAAwACAAAAAAAAeJxjYGRgYM7+3wwkXzAwMNQyZzMARVCABwBkEgQRAAB4nGNgZGBg8GdwYBBgAAEmBjQAABBmAKN4nGNgZprJOIGBlYGFgQBoYGBgZ2A4oATj2wMBkFLQVmPO/t/MwMCczVALk2POBvKAcgwMADQvB+YAAAB4nGP8wsDA9A4/ZiRCDbGYGLNAahh+AelyVBokB+aDzChE01OOijHMLUTC7xDmIWPmFwg23D4UAABNmD8NAAAAeJyV0U9Ik3EYwPHv4x/Mkg32bqyF4W8Ht+m2dGs1Zzp1C/IgA0E62CUPQnTuEBXrFHQr6tJRIkLEu9JpF6mbKIhs4PQSHTqIl6Ag3h5eR3sbE/L98Ly/F97ned7f+/yADqBTw693cdaujiNdS0zTjYcRcvq0yH2eUGaFDbbYZp8DvnLMD36LVwYlJVnJy6zMy7I8N34TMldNxKyHX4ffhD9FRqNWNBiP2Lb2NYwyzgz3WOKp06/CZ3aocsg3TviJLT6JSUZyUpQ5WZAHxjKXTX/7fvZ3jYrGisYL+xX/eR0NHL6vb9Y36m9r/dVsNbNn6d+X9MVDjUcaz5y0Mi95xwfW2eQLu9T4JUbSMiYF3dtdeSwfZVXW2n5ikGGSjOn0bpIlQZrrOssRolwjolOIMcQtncUEcabIkOIGBSadzLzmzuiOmjr1NE71Nnjw/nWHQEMI6xx1zapQS9W/ulR3Gz0tLqjeNi6qS6rPxePidfG5WC38DYEzBFXIccXF4jZFnWtCzyP5B8I+WjUAAAAAAABNAJUA0AEdAUwBewHCAhMCQQJ1AsYC8wNTA64D+wQ2BIwE2QUIBTYFhwXXBjcGhgbEBvIHQwdxB6YH1AgOCEMIfwisCPQJMAkwCTsJUglkCYEJqAnXCegKBAoQCjQKYgqNCroK5gsTC0ALggvQDBoMVAxnDJMMvgzKDPcNQg19DZ4NwA3MDdgN7Q35DjEOVA53Dp8O1w7wDzcPZ3icvVk7jxtHDJ5dRVLiKLEPh8UVLgwhMFKkCIyFoMJFftBVqraaSlWq/E1XrlQN4HOG5Dw4nNdGDrzn3RntyRzOR/IjOacOyl7jZfOsNmqvflav1aN6Um/VO/Wb+l39of5U6vF0nLaneTraO46ldzTqYXk52If+8g89x4ufxef4WesrXNo9dPiwaHspq0tbM/UgdHhf0Mu/G26pSvnn8VPUYYe6sU+g0E8NfQJG7926e3Z7vDgudNn5y2FYHBZhVe0wgFVX2EfiUBtrWOTPFA3xcHBYbcqaBX1o/+kcXQF2DjrYa7y4lfg/u/l7pM+ZdF0R3vetkj3nShwIuw4LB7NkX+7nAOUvXRvPsO+aZZuRKCxbDMVPmY1lMKI1hqVsDe7re2aZYTHaX8aiULHFj9XdoxWk5C1agkYTl7AWMPrlbyNXCSCvR9nb/CzGfeEdQ9lodDqrg8GBXjh8d8wDgh+Ej/2IKiFMKGt2VaPpzYq9n9VH9VfqZzMbZ7bzpwbTEBpGG8dycei4nYdkV8gFr1fqX9Seazz3NTdMZWN6ekuFudZ359Z6pGe5VT4Z35TVQs2auayVV73nFfMpY9w0jTov/HWVFbuYnIVn+rGGjbclhKbOCw+W1MK1ynYtnEo8UcFMMEUG3mqWeGQ2mux8CowJfnNDJIYFwbAJnmAglwiT1Vk9vceL3QSjoQrTf2Oea0ZFo5oJYZHnuf85E+fj7BBq6wYJspSGo2bOOnfyeEmrHjvWA4kGYvhy+ZBz4/Ifc3ANx32FwzM0DdUEgrUTOL3rB+1eNbXr6uXvTJcYFVyDhBrbcVfL/eOFtorbpeS/pHtbH3eSdfvZM81GJiZ8SqG1ZCS9Qrfqy8cK41DlY0KBeX99uT3lHVtYwe8vwGxB/owL7hjU1zU25GzM58MNPbVHzM2MPQR50lbRd+wCxiBNU6l8GC8mcvWSlDEOugZyMRvw3UTPoE4M95YSMIm+itp8VW/NO75yXaRd61eqhoJT8HXviLqZRZ0Pa+4JDrvVHWa/l8uqPthVZZdRl2u601UI+3W3wnfKOoBxs7V3aeOlBlhXafuzUeoDsCNoY+dfr8rYH9JGnTl/YrgtsSYZScZww28jD2/oexA14NNK/UAS3Xdgf8gdGyEXJMN/+qqC+B1JF8hUey7GrwnjLMj0/eqsxDWCZ6hIFSRjHBLjJegadIxuCDiMl4RJ8VtJnUyY8YSkwE7DMtwQP/R+Owd5W8AGWI/tJ7Ay7wqo6XWV4PgsWbiKy1DBmboMzRKcruW3bt88iTuxY1OqMutz0oRS45mHlsyT1NglyQ9Mv7rfmZrgptwaxoYpnJ2e6B4WTclMcFXyilPe1HvlKvx3WHgYE1wGaxJaW9Z+vO5bWR+lHR3XpdqRGt/c6ZAvsk50lyglG9FVZwhy9WNlHuJfu0LAhushmUReYLWAyJyYSyQnsNMDqkHOYfVjooXXwGUxWNjnbg2ZdVc8CMccYNndsp9jvuPkz7KBtRw/Uh1567MMZwOojLx5HPGKqy734ZQzS5rHjIvXgtQBcpbdEebDydXzIdpkRupEWyK6Fm13nEjNwnYUA/RukqffePbtvNwdhN8KBy7pkUuvNolV35Obx5PYo2Ma48433IkwFNImq23DYQpiAZkN6vlLKbP53e4ZpxuqZ6P9tuATQu9EgseRt6OpL1De3TzHvGvni39vM3l4D1ldYxVFNYCvnD7IuHKCSYKrmtBzsMBQ/ejt9dzFLhtdt+Tk7QpiHzyJUDJERCDtmuTMqpTplNaqRrvexhSk7Ip7T9iB79zVH/6A5lkmke+O5UasF3jQ91x0U4eClPhNf+lq9fvaBbg/Il/zh641Z5fpCAxjcFUb4ZBM8Zk3dbTEv4zKPfsAeJwtiEEKgCAUBccSIoIWLTpDJ2jvDaIbiIgIShAKHr9fNIth3gM0O4oXxfT5pWOQ1aP0KM/K8nfHzGbKlaM7YvPp9KEme2MoXGQijkPc8CROcaBKWe4HCJUPQgB4nH2QxWLDMBAFM2lTZmZmtHetOCk7VG6+pv/f+OleH+YgaUcjV6qV/79+pUKVIYapMcIoY4wzwSRTTDPDLHPMs8AiSyyzwiprrLPBJltss8Mue+xzwCFHHHPCKWecc8ElV1xzwy0JKYaTEaiT06DJHfc88MgTz7xQ0KJNhy49XnnjnQ8++eKbH/q13yTJUtFEFzMxiHUxFxtiUyzEltgWO2JX7JUMiSh/kD/IH+QP8gf5g/xB/iB/kN9lcBlcBpfBZXAZXAaXwWVwGUyzph5ToUenmi061WmaNflNr7B4Jr5CsyazxTbthnhSDaYGU5vFW7Tr8V41BNny+K9im16Rx90BLUkz0UtGZ0ttnQEtbSbioNNyncnTcr3uWm8V5VTR/gPP+XEbAA==";
+const PIXEL_STYLE = `
+@font-face { font-family: "AtomicPixel"; src: url(data:font/woff;base64,${DX_PIXEL_FONT_B64}) format("woff"); font-display: block; }
+.dx-skin-pixel, .dx-skin-pixel * { font-family: ${DX_PIXEL_FONT} !important; letter-spacing: 0 !important; font-stretch: normal !important; font-weight: 400 !important; -webkit-font-smoothing: none; }
+.dx-skin-pixel img, .dx-skin-pixel canvas, .dx-pixelated { image-rendering: crisp-edges; image-rendering: pixelated; }
+.dx-skin-pixel .dx-btn { border-radius: 0; border: 3px solid #0a0a06; background: #55553a; color: #f4e9b0; text-shadow: 2px 2px 0 #0a0a06; transition: none;
+  box-shadow: inset 3px 3px 0 #8c8c62, inset -3px -3px 0 #2c2c1c, 4px 4px 0 #0a0a06; }
+.dx-skin-pixel .dx-btn:active:not(:disabled) { transform: translate(3px,3px); box-shadow: inset 3px 3px 0 #8c8c62, inset -3px -3px 0 #2c2c1c; }
+.dx-skin-pixel .dx-btn-go { background: #d09a1a; color: #1c1200; text-shadow: none; box-shadow: inset 3px 3px 0 #f6d264, inset -3px -3px 0 #8a5c08, 4px 4px 0 #0a0a06; }
+.dx-skin-pixel .dx-btn-danger { background: #b02a1c; box-shadow: inset 3px 3px 0 #e2604c, inset -3px -3px 0 #5e120a, 4px 4px 0 #0a0a06; }
+.dx-skin-pixel .dx-panel { border-radius: 0; background: #1c1c12; border: 3px solid #0a0a06; box-shadow: inset 0 0 0 3px #4e4e30, 6px 6px 0 rgba(0,0,0,0.55); }
+.dx-skin-pixel .dx-dot { border-radius: 0; }
+.dx-skin-pixel .dx-dot-on { background: #39e06a; border-color: #0a3a18; box-shadow: none; }
+
+.dx-skin-pixel .dx-card { transition: none; }
+.dx-skin-pixel .dx-card-frame { border-radius: 0; background: var(--rs); box-shadow: inset 4px 4px 0 rgba(255,255,255,0.42), inset -4px -4px 0 rgba(0,0,0,0.5), 0 0 0 3px #0a0a06, 8px 8px 0 rgba(0,0,0,0.55); }
+.dx-skin-pixel .dx-card-inner { border-radius: 0; background: var(--fd); box-shadow: inset 0 0 0 3px #0a0a06; }
+.dx-skin-pixel .dx-card-art { border-radius: 0; left: 3px; right: 3px; top: 3px; height: 150px; border-bottom: 3px solid #0a0a06; }
+.dx-skin-pixel .dx-card-art::after { display: none; }
+.dx-skin-pixel .dx-card-name { background: #15150e; border-top: 3px solid var(--re); border-bottom: 3px solid var(--re); box-shadow: none; padding: 0 6px; top: 150px; height: 34px; }
+.dx-skin-pixel .dx-card-text { border-radius: 0; background: #d9c796; box-shadow: inset 3px 3px 0 #f2e6ba, inset -3px -3px 0 #9c8a58; padding: 5px 6px; }
+.dx-skin-pixel .dx-card-foot { font-size: 12px; }
+.dx-skin-pixel .dx-card-glare { display: none; }
+.dx-skin-pixel .dx-badge { border-radius: 0 !important; text-shadow: 2px 2px 0 #0a0a06; border: 3px solid #0a0a06 !important; }
+.dx-skin-pixel .dx-badge-cost { background: #2fb85c; box-shadow: inset 3px 3px 0 #8af0a8, inset -3px -3px 0 #126a30; }
+.dx-skin-pixel .dx-badge-atk { background: #e09a1c; box-shadow: inset 3px 3px 0 #ffd870, inset -3px -3px 0 #8a5206; }
+.dx-skin-pixel .dx-badge-hp { background: #c8281e; box-shadow: inset 3px 3px 0 #f47868, inset -3px -3px 0 #6e0e08; }
+.dx-skin-pixel .dx-badge-armor { background: #8a94a0; box-shadow: inset 3px 3px 0 #d8e0e8, inset -3px -3px 0 #3e4650; }
+.dx-skin-pixel .dx-playable .dx-card-frame { animation: dxpPlayable 0.8s steps(1) infinite; }
+@keyframes dxpPlayable { 0%,100% { box-shadow: inset 4px 4px 0 rgba(255,255,255,0.42), inset -4px -4px 0 rgba(0,0,0,0.5), 0 0 0 3px #0a0a06, 0 0 0 7px #39ff14; } 50% { box-shadow: inset 4px 4px 0 rgba(255,255,255,0.42), inset -4px -4px 0 rgba(0,0,0,0.5), 0 0 0 3px #0a0a06, 0 0 0 7px #1c8f08; } }
+.dx-skin-pixel .dx-handcard { transition-timing-function: steps(4); animation-timing-function: steps(6); }
+
+.dx-skin-pixel .dx-minion-body { animation-timing-function: steps(6); transition: none; }
+.dx-skin-pixel .dx-minion-frame, .dx-skin-pixel .dx-minion-taunt .dx-minion-frame { border-radius: 0; background: var(--rs); box-shadow: inset 3px 3px 0 rgba(255,255,255,0.42), inset -3px -3px 0 rgba(0,0,0,0.5), 0 0 0 3px #0a0a06, 6px 6px 0 rgba(0,0,0,0.5); animation: none; }
+.dx-skin-pixel .dx-minion-taunt .dx-minion-frame { box-shadow: 0 0 0 3px #0a0a06, 0 0 0 8px #b8bec8, 0 0 0 11px #0a0a06, 9px 9px 0 6px rgba(0,0,0,0.5); }
+.dx-skin-pixel .dx-minion-art, .dx-skin-pixel .dx-minion-taunt .dx-minion-art { border-radius: 0; }
+.dx-skin-pixel .dx-minion-art::after { background: linear-gradient(180deg,rgba(8,8,6,0) 0,rgba(8,8,6,0) 70%,rgba(8,8,6,0.84) 70%,rgba(8,8,6,0.84) 100%); box-shadow: inset 0 0 0 3px #0a0a06; }
+.dx-skin-pixel .dx-minion-name { font-size: 13px; text-shadow: 2px 2px 0 #0a0a06; left: 34px; right: 34px; bottom: 8px; }
+.dx-skin-pixel .dx-taunt-tab { border-radius: 0; background: #b8bec8; border: 3px solid #0a0a06; box-shadow: none; font-size: 12px; top: -19px; }
+.dx-skin-pixel .dx-chip { border-radius: 0; border: 3px solid #0a0a06; box-shadow: none; }
+.dx-skin-pixel .dx-ready .dx-minion-frame, .dx-skin-pixel .dx-toxic.dx-ready .dx-minion-frame { animation: dxpReady 0.8s steps(1) infinite; }
+.dx-skin-pixel .dx-targetable .dx-minion-frame, .dx-skin-pixel .dx-toxic.dx-targetable .dx-minion-frame, .dx-skin-pixel .dx-hero-targetable { animation: dxpTarget 0.5s steps(1) infinite; }
+.dx-skin-pixel .dx-toxic .dx-minion-frame { animation: dxpToxic 1s steps(1) infinite; }
+.dx-skin-pixel .dx-selected .dx-minion-frame, .dx-skin-pixel .dx-selected.dx-toxic .dx-minion-frame { box-shadow: 0 0 0 3px #0a0a06, 0 0 0 9px #ffe04a, 0 0 0 12px #0a0a06; animation: none; }
+.dx-skin-pixel .dx-selected .dx-minion-body { transform: translateY(-15px); }
+@keyframes dxpReady { 0%,100% { box-shadow: 0 0 0 3px #0a0a06, 0 0 0 8px #39ff14; } 50% { box-shadow: 0 0 0 3px #0a0a06, 0 0 0 8px #1c8f08; } }
+@keyframes dxpTarget { 0%,100% { box-shadow: 0 0 0 3px #0a0a06, 0 0 0 8px #ff3a28; } 50% { box-shadow: 0 0 0 3px #0a0a06, 0 0 0 8px #ffd0c0; } }
+@keyframes dxpToxic { 0%,100% { box-shadow: 0 0 0 3px #0a0a06, 0 0 0 7px #4fbf1c; } 50% { box-shadow: 0 0 0 3px #0a0a06, 0 0 0 7px #b6ff3c; } }
+.dx-skin-pixel .dx-hit .dx-minion-hit, .dx-skin-pixel .dx-hero-hit { animation-timing-function: steps(5); }
+.dx-skin-pixel .dx-impact::after { border-radius: 0; background: #fff; animation: dxpImpact 0.32s steps(4) forwards; }
+@keyframes dxpImpact { 0% { transform: translate(-50%,-50%) scale(1); opacity: 1; background: #fff; } 50% { background: #ffd040; } 100% { transform: translate(-50%,-50%) scale(15); opacity: 0; background: #e04010; } }
+.dx-skin-pixel .dx-floater { animation-timing-function: steps(9); text-shadow: 3px 3px 0 #0a0a06, -3px 0 0 #0a0a06, 0 -3px 0 #0a0a06; }
+.dx-skin-pixel .dx-shield { border-radius: 0; border: 4px dashed #bfe9ff; background: rgba(140,205,255,0.18); box-shadow: none; animation: dxpShield 0.8s steps(1) infinite; }
+@keyframes dxpShield { 50% { border-color: #5aa0e0; } }
+.dx-skin-pixel .dx-ice, .dx-skin-pixel .dx-goo { filter: none; animation-timing-function: steps(5); }
+.dx-skin-pixel .dx-death-flash { display: none; }
+.dx-skin-pixel .dx-ember { border-radius: 0; background: #ffb020; animation-timing-function: steps(6); }
+.dx-tile { position: absolute; inset: 0; animation: dxpTile 0.95s steps(8) forwards; }
+@keyframes dxpTile { 0% { transform: translate(0,0); opacity: 1; filter: brightness(2.2); } 14% { filter: none; opacity: 1; } 100% { transform: translate(var(--tx), var(--ty)); opacity: 0; } }
+.dx-pix-cell { animation: dxpCell 2.4s steps(1) infinite; }
+@keyframes dxpCell { 0%,100% { opacity: 1; } 50% { opacity: 0.35; } }
+.dx-pix-glint { animation: dxpGlint 2.8s steps(9) infinite; }
+@keyframes dxpGlint { 0%,45% { transform: translateX(-10px); } 85%,100% { transform: translateX(18px); } }
+.dx-pix-snow { animation: dxpSnow 2.2s steps(11) infinite; }
+@keyframes dxpSnow { 0% { transform: translateY(-1px); opacity: 1; } 100% { transform: translateY(21px); opacity: 1; } }
+.dx-pix-drip { transform-box: fill-box; transform-origin: 50% 0%; animation: dxpDrip 1.8s steps(4) infinite; }
+@keyframes dxpDrip { 0%,100% { transform: scaleY(0.4); } 50% { transform: scaleY(1); } }
+.dx-pix-bubble { animation: dxpBubble 1.9s steps(10) infinite; }
+@keyframes dxpBubble { 0% { transform: translateY(0); opacity: 1; } 90% { opacity: 1; } 100% { transform: translateY(-20px); opacity: 0; } }
+.dx-skin-pixel .dx-decal { animation: dxSplatIn 0.2s steps(3) backwards, dxSplatOut 6s steps(6) var(--life,60s) forwards; }
+.dx-skin-pixel .dx-droplet { border-radius: 0; background: #c81818; width: 12px; height: 12px; animation-timing-function: steps(5); }
+.dx-skin-pixel .dx-mat { border-radius: 0; border: 4px solid #0a0a06; background: rgba(0,0,0,0.18); box-shadow: inset 0 0 0 4px var(--accent-soft,rgba(255,255,255,0.2)); }
+.dx-skin-pixel .dx-mat3d { transform: none; }
+.dx-skin-pixel .dx-banner, .dx-skin-pixel .dx-reveal, .dx-skin-pixel .dx-pop, .dx-skin-pixel .dx-modal { animation-timing-function: steps(7); }
+.dx-skin-pixel .dx-endtitle { animation: dxpEndTitle 0.9s steps(6) backwards; margin-right: 0; }
+@keyframes dxpEndTitle { 0% { opacity: 0; transform: scale(2.2); } 100% { opacity: 1; transform: scale(1); } }
+.dx-skin-pixel .dx-endrule { height: 4px; animation-timing-function: steps(6); }
 `;
 
 /* ---------- procedural grit textures (generated once, reused by every board) ---------- */
@@ -1481,12 +1609,23 @@ const DX_CRACKS_A = dxCracks(11, 9, 1600, 1000, 70);
 const DX_CRACKS_B = dxCracks(29, 16, 1600, 1000, 55);
 const DX_CRACKS_C = dxCracks(53, 26, 1600, 1000, 62);
 
-/* ---------- the six boards ---------- */
+// The radiation trefoil - used as the rarity mark on cards and around the table.
+function DxTrefoil({ size = 16, color = "#e6c229", dark = "#141414", glow }) {
+  return (
+    <svg viewBox="-12 -12 24 24" width={size} height={size} style={{ display: "block", flexShrink: 0, filter: glow ? `drop-shadow(0 0 4px ${glow})` : undefined }}>
+      <circle r="11" fill={color} stroke={dark} strokeWidth="1.2" /><circle r="2" fill={dark} />
+      {[0, 120, 240].map((a) => <path key={a} transform={`rotate(${a})`} d="M-1.9 -3.3A3.8 3.8 0 0 1 1.9 -3.3L4.7 -8.2A9.5 9.5 0 0 0 -4.7 -8.2Z" fill={dark} />)}
+    </svg>
+  );
+}
+
+/* ---------- the six boards (Full Graphics) ---------- */
 function DeluxeBackdrop({ styleId }) {
   const stain = dxNoiseTile("stain");
   const grain = dxNoiseTile("grain");
   const svgProps = { viewBox: "0 0 1600 1000", preserveAspectRatio: "xMidYMid slice", width: "100%", height: "100%", style: { position: "absolute", inset: 0, display: "block" } };
-  let base = "#222", stainOpacity = 0.6, stainSize = 620, decor = null, glow = null;
+  let base = "#222", stainOpacity = 0.6, decor = null, glow = null;
+  const stainSize = 620;
 
   if (styleId === "rustyard") {
     base = "linear-gradient(165deg,#6b4630 0%,#4a3327 40%,#33292a 75%,#24201f 100%)";
@@ -1629,6 +1768,234 @@ function DeluxeBackdrop({ styleId }) {
   );
 }
 
+/* =========================================================================
+   PIXEL ART toolkit: one fixed 256-colour palette (lots of browns, olives
+   and greys, like the old isometric wasteland games), an ordered-dither
+   quantiser, and helpers that turn any picture into low-resolution pixels.
+   ========================================================================= */
+let _dxPal = null;
+function dxPalette() {
+  if (_dxPal) return _dxPal;
+  const cols = [];
+  const hsv = (h, s, v) => {
+    const c = v * s, x = c * (1 - Math.abs(((h / 60) % 2) - 1)), m = v - c;
+    const [r, g, b] = h < 60 ? [c, x, 0] : h < 120 ? [x, c, 0] : h < 180 ? [0, c, x] : h < 240 ? [0, x, c] : h < 300 ? [x, 0, c] : [c, 0, x];
+    return [Math.round((r + m) * 255), Math.round((g + m) * 255), Math.round((b + m) * 255)];
+  };
+  for (let i = 0; i < 24; i++) { const v = (i / 23) * 255; cols.push([Math.round(v), Math.round(v * 0.97), Math.round(v * 0.92)]); }
+  // [hue, saturations] - eight brightness steps each
+  [[18, [0.4, 0.6, 0.78, 0.92]], [38, [0.45, 0.7, 0.92]], [70, [0.35, 0.55, 0.8]], [110, [0.4, 0.65, 0.9]], [170, [0.45, 0.8]],
+    [210, [0.35, 0.6, 0.85]], [275, [0.4, 0.7]], [0, [0.5, 0.7, 0.85, 0.97]], [14, [0.22, 0.36]], [40, [0.18, 0.3]]]
+    .forEach(([h, sats]) => sats.forEach((s) => { for (let k = 1; k <= 8; k++) cols.push(hsv(h, s, k / 8)); }));
+  [[0, 0, 0], [255, 255, 255], [57, 255, 20], [63, 224, 255], [255, 207, 64], [255, 90, 72], [182, 255, 60], [191, 233, 255]].forEach((c) => cols.push(c));
+  _dxPal = cols.slice(0, 256);
+  return _dxPal;
+}
+const DX_BAYER = [0, 8, 2, 10, 12, 4, 14, 6, 3, 11, 1, 9, 15, 7, 13, 5];
+let _dxQuantCache = null;
+// Snaps every pixel of a canvas to the 256-colour palette, with a 4x4 ordered dither.
+function dxQuantizeCanvas(cv, spread = 26) {
+  const ctx = cv.getContext("2d");
+  const w = cv.width, h = cv.height;
+  const img = ctx.getImageData(0, 0, w, h);
+  const d = img.data;
+  const pal = dxPalette();
+  if (!_dxQuantCache) { _dxQuantCache = new Int16Array(32768); _dxQuantCache.fill(-1); }
+  const cache = _dxQuantCache;
+  const clamp = (v) => (v < 0 ? 0 : v > 255 ? 255 : v);
+  for (let y = 0; y < h; y++) {
+    for (let x = 0; x < w; x++) {
+      const i = (y * w + x) * 4;
+      if (d[i + 3] < 128) { d[i + 3] = 0; continue; }
+      const t = (DX_BAYER[(y & 3) * 4 + (x & 3)] / 15 - 0.5) * spread;
+      const r = clamp(d[i] + t), g = clamp(d[i + 1] + t), b = clamp(d[i + 2] + t);
+      const key = ((r >> 3) << 10) | ((g >> 3) << 5) | (b >> 3);
+      let idx = cache[key];
+      if (idx < 0) {
+        let best = 1e9;
+        for (let p = 0; p < pal.length; p++) {
+          const dr = pal[p][0] - r, dg = pal[p][1] - g, db = pal[p][2] - b;
+          const dist = dr * dr * 2 + dg * dg * 4 + db * db * 3;
+          if (dist < best) { best = dist; idx = p; }
+        }
+        cache[key] = idx;
+      }
+      d[i] = pal[idx][0]; d[i + 1] = pal[idx][1]; d[i + 2] = pal[idx][2]; d[i + 3] = 255;
+    }
+  }
+  ctx.putImageData(img, 0, 0);
+}
+
+// Pixel versions of pictures are made once and then shared by everything that shows them.
+const _dxPixArt = {};
+function usePixelArt(key, makeSource, N = 60) {
+  const [url, setUrl] = useState(() => (_dxPixArt[key] && _dxPixArt[key].url) || null);
+  useEffect(() => {
+    let alive = true;
+    const e = _dxPixArt[key] || (_dxPixArt[key] = { url: null, waiters: [], started: false });
+    if (e.url !== null) { setUrl(e.url); return undefined; }
+    e.waiters.push((u) => { if (alive) setUrl(u); });
+    if (!e.started) {
+      e.started = true;
+      const finish = (src) => {
+        try {
+          const cv = document.createElement("canvas");
+          cv.width = N; cv.height = N;
+          const ctx = cv.getContext("2d");
+          try { ctx.filter = "contrast(1.18) saturate(1.25)"; } catch (err) {}
+          const sw = src.naturalWidth || src.width, sh = src.naturalHeight || src.height;
+          const side = Math.min(sw, sh);
+          ctx.drawImage(src, (sw - side) / 2, (sh - side) * 0.3, side, side, 0, 0, N, N);
+          dxQuantizeCanvas(cv, 30);
+          e.url = cv.toDataURL("image/png");
+        } catch (err) { e.url = ""; }
+        e.waiters.forEach((f) => f(e.url));
+        e.waiters = [];
+      };
+      try { makeSource(finish); } catch (err) { e.url = ""; }
+    }
+    return () => { alive = false; };
+  }, [key]);
+  return url;
+}
+function dxImageSource(dataUri) {
+  return (done) => { const im = new Image(); im.onload = () => done(im); im.onerror = () => done(document.createElement("canvas")); im.src = dataUri; };
+}
+
+function dxValueNoise(seed) {
+  const h = (ix, iy) => { const s = Math.sin(ix * 127.1 + iy * 311.7 + seed * 17.3) * 43758.5453; return s - Math.floor(s); };
+  const sm = (t) => t * t * (3 - 2 * t);
+  const one = (x, y) => {
+    const x0 = Math.floor(x), y0 = Math.floor(y), fx = sm(x - x0), fy = sm(y - y0);
+    const a = h(x0, y0), b = h(x0 + 1, y0), c = h(x0, y0 + 1), d = h(x0 + 1, y0 + 1);
+    return a + (b - a) * fx + (c - a) * fy + (a - b - c + d) * fx * fy;
+  };
+  return (x, y) => one(x, y) * 0.55 + one(x * 2.1, y * 2.1) * 0.28 + one(x * 4.3, y * 4.3) * 0.17;
+}
+
+// The six boards again, painted directly as 320 x 200 pixel art.
+const _dxPixBoards = {};
+function dxPixelBoardURL(styleId) {
+  if (_dxPixBoards[styleId] !== undefined) return _dxPixBoards[styleId];
+  let url = "";
+  try {
+    const W = 320, H = 200;
+    const cv = document.createElement("canvas");
+    cv.width = W; cv.height = H;
+    const ctx = cv.getContext("2d");
+    const img = ctx.createImageData(W, H);
+    const seed = BOARD_STYLES.findIndex((b) => b.id === styleId) + 3;
+    const n1 = dxValueNoise(seed), n2 = dxValueNoise(seed + 40);
+    const rnd = mulberry32(seed * 977);
+    const pools = [[40, 44, 52, 26], [280, 162, 60, 30], [258, 30, 34, 18], [64, 178, 44, 20]];
+    for (let y = 0; y < H; y++) {
+      for (let x = 0; x < W; x++) {
+        const a = n1(x / 34, y / 34), b = n2(x / 9, y / 9);
+        let r, g, bl;
+        if (styleId === "rustyard") {
+          const k = Math.max(0, Math.min(1, (a - 0.36) * 3.2));
+          const sh = 0.72 + b * 0.5;
+          r = (72 + 86 * k) * sh; g = (52 + 22 * k) * sh; bl = (42 - 12 * k) * sh;
+        } else if (styleId === "bunker") {
+          const sh = 0.62 + a * 0.45 + b * 0.22;
+          r = 86 * sh; g = 92 * sh; bl = 90 * sh;
+          if (y < 9 || y >= H - 9) { const on = ((x + y) >> 3) & 1; r = on ? 214 : 22; g = on ? 176 : 22; bl = on ? 30 : 24; if (b > 0.62) { r *= 0.6; g *= 0.6; bl *= 0.6; } }
+        } else if (styleId === "swamp") {
+          const sh = 0.5 + a * 0.75 + b * 0.25;
+          r = 30 * sh; g = 50 * sh; bl = 24 * sh;
+          pools.forEach(([px, py, rx, ry]) => {
+            const dd = ((x - px) / rx) ** 2 + ((y - py) / ry) ** 2;
+            if (dd < 1) { const f = (1 - dd) ** 1.4; r += 130 * f; g += 235 * f; bl += 40 * f; }
+          });
+        } else if (styleId === "highway") {
+          const sh = 0.6 + a * 0.4 + b * 0.35;
+          r = 46 * sh; g = 44 * sh; bl = 44 * sh;
+          if (y < 46) { const f = (1 - y / 46) * 0.55; r += 235 * f; g += 96 * f; bl += 20 * f; }
+          const worn = b > 0.6;
+          if (!worn && (y === 96 || y === 97 || y === 102 || y === 103) && (x % 46) < 36) { r = 212; g = 172; bl = 30; }
+          if (!worn && (y === 16 || y === 17 || y === 182 || y === 183) && (x % 40) < 22) { r = 212; g = 208; bl = 196; }
+        } else if (styleId === "reactor") {
+          const sh = 0.6 + a * 0.5 + b * 0.2;
+          r = 12 * sh; g = 30 * sh; bl = 40 * sh;
+          if (x % 16 === 0 || y % 16 === 0) { r += 8; g += 44; bl += 56; }
+          const dd = Math.hypot((x - W / 2) / 110, (y - H / 2) / 80);
+          if (dd < 1) { const f = (1 - dd) ** 2 * 0.75; r += 60 * f; g += 215 * f; bl += 250 * f; }
+          if (y < 12 || y >= H - 12) { r = 10; g = 18; bl = 24; if ((x % 20) < 9 && (y === 5 || y === 6 || y === H - 6 || y === H - 7)) { r = 60; g = 220; bl = 255; } }
+        } else {
+          const sh = 0.78 + a * 0.3 + b * 0.16 + Math.sin(y / 11 + a * 6) * 0.05;
+          r = 196 * sh; g = 164 * sh; bl = 114 * sh;
+          const sun = Math.max(0, 1 - Math.hypot((x - 50) / 150, (y - 20) / 100));
+          r += 50 * sun; g += 46 * sun; bl += 34 * sun;
+        }
+        const vg = 1 - 0.5 * Math.min(1, ((x - W / 2) / (W / 2)) ** 2 * 0.7 + ((y - H / 2) / (H / 2)) ** 2 * 0.7);
+        const i = (y * W + x) * 4;
+        img.data[i] = Math.max(0, Math.min(255, r * vg)); img.data[i + 1] = Math.max(0, Math.min(255, g * vg)); img.data[i + 2] = Math.max(0, Math.min(255, bl * vg)); img.data[i + 3] = 255;
+      }
+    }
+    ctx.putImageData(img, 0, 0);
+    const walk = (count, color, len) => {
+      ctx.fillStyle = color;
+      for (let c = 0; c < count; c++) {
+        let x = rnd() * W, y = rnd() * H, ang = rnd() * 6.283;
+        const steps = len * (0.5 + rnd());
+        for (let s = 0; s < steps; s++) {
+          ang += (rnd() - 0.5) * 0.9;
+          x += Math.cos(ang); y += Math.sin(ang);
+          ctx.fillRect(Math.round(x), Math.round(y), 1, 1);
+          if (rnd() > 0.93) { let bx = x, by = y, ba = ang + (rnd() > 0.5 ? 1 : -1); for (let q = 0; q < 8; q++) { bx += Math.cos(ba); by += Math.sin(ba); ctx.fillRect(Math.round(bx), Math.round(by), 1, 1); } }
+        }
+      }
+    };
+    if (styleId === "rustyard") {
+      for (let x = 0; x <= W; x += 64) { ctx.fillStyle = "#140e0a"; ctx.fillRect(x - 1, 0, 2, H); ctx.fillStyle = "rgba(255,210,170,0.22)"; ctx.fillRect(x + 1, 0, 1, H); }
+      for (let y = 0; y <= H; y += 50) { ctx.fillStyle = "#140e0a"; ctx.fillRect(0, y - 1, W, 2); ctx.fillStyle = "rgba(255,210,170,0.22)"; ctx.fillRect(0, y + 1, W, 1); }
+      for (let x = 0; x <= W; x += 64) for (let y = 0; y <= H; y += 50) [[6, 6], [-7, 6], [6, -7], [-7, -7]].forEach(([dx, dy]) => {
+        ctx.fillStyle = "rgba(200,88,26,0.6)"; ctx.fillRect(x + dx, y + dy + 2, 1, 9);
+        ctx.fillStyle = "#1c120c"; ctx.fillRect(x + dx - 1, y + dy - 1, 3, 3);
+        ctx.fillStyle = "#c8b4a0"; ctx.fillRect(x + dx - 1, y + dy - 1, 2, 2);
+      });
+      walk(5, "#100a07", 26);
+    } else if (styleId === "bunker") {
+      ctx.fillStyle = "#151817"; [107, 213].forEach((x) => ctx.fillRect(x, 9, 2, H - 18)); [67, 133].forEach((y) => ctx.fillRect(0, y, W, 2));
+      ctx.fillStyle = "rgba(255,255,255,0.14)"; [109, 215].forEach((x) => ctx.fillRect(x, 9, 1, H - 18)); [69, 135].forEach((y) => ctx.fillRect(0, y, W, 1));
+      ctx.fillStyle = "#0e0f0f"; ctx.fillRect(28, 150, 16, 16); ctx.fillStyle = "#2a2e2c"; for (let k = 0; k < 4; k++) ctx.fillRect(30, 152 + k * 4, 12, 1);
+      walk(9, "#0c0e0e", 30);
+    } else if (styleId === "swamp") {
+      ctx.fillStyle = "#070b05";
+      for (let c = 0; c < 5; c++) { let x = c % 2 ? W : 0, y = 30 + rnd() * 140; const dir = c % 2 ? -1 : 1; for (let s = 0; s < 150; s++) { x += dir; y += Math.sin(s / 13 + c) * 0.9; ctx.fillRect(Math.round(x), Math.round(y), 1, 3 - Math.floor(s / 60)); } }
+      ctx.fillStyle = "#d6ff7a"; pools.forEach(([px, py]) => { ctx.fillRect(px - 4, py - 2, 2, 2); ctx.fillRect(px + 8, py + 3, 1, 1); ctx.fillRect(px + 2, py - 6, 1, 1); });
+    } else if (styleId === "highway") {
+      walk(16, "#080808", 34);
+      ctx.fillStyle = "rgba(0,0,0,0.45)"; for (let s = 0; s < 170; s++) { const x = s, y = 152 - Math.sin(s / 60) * 16; ctx.fillRect(x, Math.round(y), 1, 5); ctx.fillRect(x, Math.round(y) + 12, 1, 5); }
+      ctx.fillStyle = "#0c0b0b"; ctx.fillRect(236, 132, 30, 12); ctx.fillRect(232, 136, 38, 5); ctx.fillStyle = "#ff7a28"; ctx.fillRect(244, 136, 1, 1); ctx.fillRect(256, 139, 1, 1);
+    } else if (styleId === "reactor") {
+      ctx.fillStyle = "rgba(90,230,255,0.22)";
+      [0, 120, 240].forEach((deg) => { ctx.beginPath(); const a0 = ((deg - 90 - 30) * Math.PI) / 180, a1 = ((deg - 90 + 30) * Math.PI) / 180; ctx.arc(W / 2, H / 2, 62, a0, a1); ctx.arc(W / 2, H / 2, 22, a1, a0, true); ctx.closePath(); ctx.fill(); });
+      ctx.beginPath(); ctx.arc(W / 2, H / 2, 10, 0, 6.283); ctx.fill();
+      walk(4, "#04080a", 22);
+    } else {
+      walk(26, "#4a2e14", 30); walk(12, "#6e4a26", 20);
+      ctx.fillStyle = "#efe6cf"; ctx.fillRect(34, 40, 10, 8); ctx.fillRect(36, 48, 6, 3); ctx.fillStyle = "#5a4024"; ctx.fillRect(36, 43, 2, 2); ctx.fillRect(40, 43, 2, 2);
+    }
+    dxQuantizeCanvas(cv, 34);
+    url = cv.toDataURL("image/png");
+  } catch (e) { url = ""; }
+  _dxPixBoards[styleId] = url;
+  return url;
+}
+function PixelBackdrop({ styleId, dim = 0 }) {
+  const url = dxPixelBoardURL(styleId);
+  return (
+    <div className="dx-pixelated" style={{ position: "absolute", inset: 0, background: url ? `#14140c url(${url}) center / cover no-repeat` : "#14140c", transform: "translateZ(0)" }}>
+      {dim > 0 && <div style={{ position: "absolute", inset: 0, background: `rgba(8,8,4,${dim})` }} />}
+    </div>
+  );
+}
+function DxBoardBackdrop({ styleId }) {
+  const pixel = useDisplay().mode === "pixel";
+  return pixel ? <PixelBackdrop styleId={styleId} /> : <DeluxeBackdrop styleId={styleId} />;
+}
+
 /* ---------- colourful stand-in art for cards that have no picture yet ---------- */
 function deluxeTextureCanvas(canvas, seed, iconKey, tint) {
   const ctx = canvas.getContext("2d");
@@ -1684,7 +2051,17 @@ function deluxeTextureCanvas(canvas, seed, iconKey, tint) {
   ctx.fillStyle = vg;
   ctx.fillRect(0, 0, W, H);
 }
-function DeluxeArt({ card }) {
+function dxStandInSource(card) {
+  return (done) => {
+    const cv = document.createElement("canvas");
+    cv.width = 300; cv.height = 300;
+    const keys = Object.keys(ICON_PATHS);
+    deluxeTextureCanvas(cv, hash(card.id || card.name), keys[hash(card.name) % keys.length], dxFaction(card.hero || null));
+    done(cv);
+  };
+}
+const DX_ART_STYLE = { width: "100%", height: "100%", display: "block", objectFit: "cover", objectPosition: "50% 28%" };
+function DxSmoothArt({ card }) {
   const canvasRef = useRef(null);
   const override = CARD_ART_OVERRIDES[card.name];
   const hero = card.hero || null;
@@ -1693,8 +2070,31 @@ function DeluxeArt({ card }) {
     const keys = Object.keys(ICON_PATHS);
     deluxeTextureCanvas(canvasRef.current, hash(card.id || card.name), keys[hash(card.name) % keys.length], dxFaction(hero));
   }, [card.name, card.id, override, hero]);
-  if (override) return <img src={override} alt={card.name} draggable={false} style={{ width: "100%", height: "100%", objectFit: "cover", objectPosition: "50% 28%", display: "block" }} />;
-  return <canvas ref={canvasRef} width={300} height={300} style={{ width: "100%", height: "100%", display: "block", objectFit: "cover" }} />;
+  if (override) return <img src={override} alt={card.name} draggable={false} style={DX_ART_STYLE} />;
+  return <canvas ref={canvasRef} width={300} height={300} style={DX_ART_STYLE} />;
+}
+function DxPixelArt({ card }) {
+  const override = CARD_ART_OVERRIDES[card.name];
+  const url = usePixelArt("card:" + (card.id || card.name), override ? dxImageSource(override) : dxStandInSource(card), 60);
+  if (!url) return <div style={{ width: "100%", height: "100%", background: dxFaction(card.hero || null).dark }} />;
+  return <img className="dx-pixelated" src={url} alt={card.name} draggable={false} style={DX_ART_STYLE} />;
+}
+// Card picture in whichever graphical style is active.
+function DeluxeArt({ card }) {
+  const pixel = useDisplay().mode === "pixel";
+  return pixel ? <DxPixelArt card={card} /> : <DxSmoothArt card={card} />;
+}
+function DxPixelHeroArt({ hero }) {
+  const src = HERO_ART_OVERRIDES[hero];
+  const url = usePixelArt("hero:" + hero, src ? dxImageSource(src) : dxStandInSource({ name: hero, id: hero, hero }), 56);
+  if (!url) return <div style={{ width: "100%", height: "100%", background: dxFaction(hero).dark }} />;
+  return <img className="dx-pixelated" src={url} alt={hero} draggable={false} style={{ ...DX_ART_STYLE, objectPosition: "50% 50%" }} />;
+}
+function DxHeroArt({ hero }) {
+  const pixel = useDisplay().mode === "pixel";
+  if (pixel) return <DxPixelHeroArt hero={hero} />;
+  if (HERO_ART_OVERRIDES[hero]) return <img src={HERO_ART_OVERRIDES[hero]} alt={hero} draggable={false} style={{ ...DX_ART_STYLE, objectPosition: "50% 50%" }} />;
+  return <DxSmoothArt card={{ name: hero, id: hero, hero }} />;
 }
 
 // Makes a card lean toward the pointer, with a moving highlight - the "3D" feel on hover.
@@ -1720,37 +2120,37 @@ const dxTilt = {
 /* ---------- the card face (base size 240 x 336, drawn at any scale) ---------- */
 const DX_CARD_W = 240, DX_CARD_H = 336;
 function DeluxeCard({ card, scale = 1, dim, playable, tilt, selected }) {
+  const pixel = useDisplay().mode === "pixel";
   const r = DX_RARITY[card.rarity] || DX_RARITY.common;
   const fac = dxFaction(card.hero);
   const isSpell = card.type === "spell";
+  const useTilt = tilt && !pixel;
+  const vars = { "--rf": r.frame, "--rs": r.solid, "--re": r.edge, "--fc": fac.c, "--fd": fac.dark };
+  const big = (n) => (String(n).length > 1 ? (pixel ? 24 : 27) : (pixel ? 32 : 31));
   return (
-    <div className={playable ? "dx-playable" : undefined} style={{ width: DX_CARD_W * scale, height: DX_CARD_H * scale, position: "relative", flexShrink: 0, fontFamily: DX_FONT }} {...(tilt ? dxTilt : {})}>
-      <div className={"dx-card" + (dim ? " dx-card-dim" : "")} style={{ width: DX_CARD_W, height: DX_CARD_H, transform: scale === 1 ? undefined : `scale(${scale}) perspective(900px) rotateX(var(--dx-rx,0deg)) rotateY(var(--dx-ry,0deg))`, transformOrigin: "0 0" }}>
-        <div className="dx-card-frame" style={{ background: r.frame, outline: selected ? "5px solid #ff5a48" : "none", outlineOffset: 2 }}>
-          <div style={{ position: "relative", width: "100%", height: "100%", borderRadius: 10, overflow: "hidden", background: `linear-gradient(180deg,${fac.dark} 0%,#141312 100%)`, boxShadow: "inset 0 0 0 2px rgba(0,0,0,0.65)" }}>
-            {/* art */}
-            <div style={{ position: "absolute", left: 6, right: 6, top: 6, height: 150, borderRadius: 7, overflow: "hidden", boxShadow: "inset 0 0 0 2px rgba(0,0,0,0.7)", background: "#000" }}>
-              <DeluxeArt card={card} />
-              <div style={{ position: "absolute", inset: 0, boxShadow: "inset 0 0 22px rgba(0,0,0,0.6)", pointerEvents: "none" }} />
+    <div className={playable ? "dx-playable" : undefined} style={{ width: DX_CARD_W * scale, height: DX_CARD_H * scale, position: "relative", flexShrink: 0, fontFamily: DX_FONT, ...vars }} {...(useTilt ? dxTilt : {})}>
+      <div className={"dx-card" + (dim ? " dx-card-dim" : "")} style={{ width: DX_CARD_W, height: DX_CARD_H, transform: `scale(${scale})${useTilt ? " perspective(900px) rotateX(var(--dx-rx,0deg)) rotateY(var(--dx-ry,0deg))" : ""}`, transformOrigin: "0 0" }}>
+        <div className="dx-card-frame" style={selected ? { outline: "5px solid #ff5a48", outlineOffset: 2 } : undefined}>
+          <div className="dx-card-inner">
+            <div className="dx-card-art"><DeluxeArt card={card} /></div>
+            <div className="dx-card-name">
+              <WrapFitText text={card.name} width="100%" height={pixel ? 28 : 32} maxFontSize={pixel ? (card.name.length > 13 ? 12 : 16) : (card.name.length > 15 ? 13.5 : 17)} minFontSize={pixel ? 8 : 9} duration={7} color="#fff" />
             </div>
-            {/* name ribbon */}
-            <div style={{ position: "absolute", left: 0, right: 0, top: 146, height: 36, background: "linear-gradient(180deg,#3a3a40,#17171a)", borderTop: `2px solid ${r.edge}`, borderBottom: `2px solid ${r.edge}`, boxShadow: "0 3px 6px rgba(0,0,0,0.6)", padding: "0 10px", fontFamily: DX_DISPLAY_FONT, fontStretch: "condensed", textTransform: "uppercase", letterSpacing: "0.03em" }}>
-              <WrapFitText text={card.name} width="100%" height={32} maxFontSize={card.name.length > 15 ? 13.5 : 17} minFontSize={9} duration={7} color="#fff" />
+            <div className={"dx-card-text" + (isSpell ? " dx-card-text-item" : "")}>
+              {card.text
+                ? <AutoScrollText text={card.text} height={isSpell ? 86 : 74} fontSize={pixel ? 13 : 13.5} duration={10} bold color="#2a2115" />
+                : <div style={{ height: "100%", display: "flex", alignItems: "center", justifyContent: "center", fontSize: 12, color: "rgba(60,40,10,0.5)", fontStyle: pixel ? "normal" : "italic" }}>No special ability</div>}
             </div>
-            {/* rules text */}
-            <div style={{ position: "absolute", left: 8, right: 8, top: 188, height: isSpell ? 96 : 84, borderRadius: 6, background: "linear-gradient(180deg,#f1e8d1,#d8caa6)", boxShadow: "inset 0 0 0 1px rgba(60,40,10,0.5), inset 0 2px 8px rgba(60,40,10,0.35)", padding: "4px 7px" }}>
-              {card.text ? <AutoScrollText text={card.text} height={isSpell ? 88 : 76} fontSize={13.5} duration={10} bold color="#2a2115" /> : <div style={{ height: "100%", display: "flex", alignItems: "center", justifyContent: "center", fontSize: 12, color: "rgba(60,40,10,0.45)", fontStyle: "italic" }}>No special ability</div>}
-            </div>
-            {/* footer: faction + rarity */}
-            <div style={{ position: "absolute", left: 0, right: 0, bottom: 5, textAlign: "center", fontFamily: DX_DISPLAY_FONT, fontStretch: "condensed", fontSize: 11.5, fontWeight: 700, letterSpacing: "0.12em", textTransform: "uppercase", color: fac.c, lineHeight: 1.15 }}>
-              <div style={{ display: "inline-block", width: 9, height: 9, background: r.gem, transform: "rotate(45deg)", boxShadow: `0 0 6px ${r.glow}`, border: "1px solid rgba(0,0,0,0.6)", marginBottom: 2 }} />
+            {/* footer: rarity mark (the trefoil is coloured by rarity) + faction */}
+            <div className="dx-card-foot">
+              <span title={r.label}><DxTrefoil size={15} color={r.gem} glow={pixel ? undefined : r.glow} /></span>
               <div>{isSpell ? "Item" : (card.hero || "Neutral")}</div>
             </div>
           </div>
         </div>
-        {card.cost !== null && card.cost !== undefined && <div className="dx-badge dx-badge-cost" style={{ left: -9, top: -9, width: 56, height: 56, fontSize: 32 }}>{card.cost}</div>}
-        {!isSpell && <div className="dx-badge dx-badge-atk" style={{ left: -9, bottom: -9, width: 54, height: 54, fontSize: 30 }}>{card.atk}</div>}
-        {!isSpell && <div className="dx-badge dx-badge-hp" style={{ right: -9, bottom: -9, width: 52, height: 58, fontSize: 30 }}>{card.hp}</div>}
+        {card.cost !== null && card.cost !== undefined && <div className="dx-badge dx-badge-cost" style={{ left: -9, top: -9, width: 56, height: 56, fontSize: big(card.cost) + 1 }}>{card.cost}</div>}
+        {!isSpell && <div className="dx-badge dx-badge-atk" style={{ left: -9, bottom: -9, width: 54, height: 54, fontSize: big(card.atk) }}>{card.atk}</div>}
+        {!isSpell && <div className="dx-badge dx-badge-hp" style={{ right: -9, bottom: -9, width: 52, height: pixel ? 54 : 58, fontSize: big(card.hp) }}>{card.hp}</div>}
         <div className="dx-card-glare" />
       </div>
     </div>
@@ -1759,26 +2159,35 @@ function DeluxeCard({ card, scale = 1, dim, playable, tilt, selected }) {
 
 // Card back, used for the opponent's hand and the decks.
 function DeluxeCardBack({ w = 44 }) {
+  const pixel = useDisplay().mode === "pixel";
   const h = w * 1.4;
+  if (pixel) {
+    const b = Math.max(2, Math.round(w * 0.07));
+    return (
+      <div style={{ width: w, height: h, background: "#7a4a1e", border: `${b}px solid #0a0a06`, boxShadow: `inset ${b}px ${b}px 0 #b87a3a, inset -${b}px -${b}px 0 #3e2208`, flexShrink: 0, display: "flex", alignItems: "center", justifyContent: "center" }}>
+        <div style={{ width: w * 0.46, height: w * 0.46, background: "#e6c229", border: `${b}px solid #0a0a06`, display: "flex", alignItems: "center", justifyContent: "center" }}>
+          <div style={{ width: w * 0.14, height: w * 0.14, background: "#0a0a06" }} />
+        </div>
+      </div>
+    );
+  }
   return (
     <div style={{ width: w, height: h, borderRadius: w * 0.14, background: "linear-gradient(155deg,#8a5a2b,#4a2c12 45%,#2a1708)", padding: w * 0.08, boxShadow: "0 3px 6px rgba(0,0,0,0.6), inset 0 1px 0 rgba(255,255,255,0.35)", flexShrink: 0 }}>
       <div style={{ width: "100%", height: "100%", borderRadius: w * 0.09, background: "repeating-linear-gradient(45deg,#1b1a18 0 6px,#26231f 6px 12px)", boxShadow: "inset 0 0 0 1px rgba(0,0,0,0.8)", display: "flex", alignItems: "center", justifyContent: "center" }}>
-        <svg viewBox="-12 -12 24 24" width={w * 0.6} height={w * 0.6}>
-          <circle r="11" fill="#e6c229" stroke="#171717" strokeWidth="1" /><circle r="2" fill="#171717" />
-          {[0, 120, 240].map((a) => <path key={a} transform={`rotate(${a})`} d="M-1.9 -3.3A3.8 3.8 0 0 1 1.9 -3.3L4.7 -8.2A9.5 9.5 0 0 0 -4.7 -8.2Z" fill="#171717" />)}
-        </svg>
+        <DxTrefoil size={w * 0.6} color="#e6c229" dark="#171717" />
       </div>
     </div>
   );
 }
 
 function DeluxeCardDetail({ card, onClose }) {
+  const mode = useDisplay().mode;
   const vw = typeof window !== "undefined" ? window.innerWidth : 800, vh = typeof window !== "undefined" ? window.innerHeight : 800;
   const s = Math.max(0.6, Math.min(1.7, (vw - 60) / DX_CARD_W, (vh - 130) / DX_CARD_H));
   // Rendered straight into <body> so it is sized in real screen pixels even
   // when it is opened from inside the scaled match table.
   return createPortal(
-    <div className="dx-root dx-modal" style={{ position: "fixed", inset: 0, background: "rgba(5,5,6,0.78)", display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", gap: 22, zIndex: 400 }} onClick={(e) => { e.stopPropagation(); onClose(); }}>
+    <div className={dxRootClass(mode) + " dx-modal"} style={{ position: "fixed", inset: 0, background: "rgba(5,5,6,0.78)", display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", gap: 22, zIndex: 400 }} onClick={(e) => { e.stopPropagation(); onClose(); }}>
       <div className="dx-pop" onClick={(e) => e.stopPropagation()}><DeluxeCard card={card} scale={s} tilt /></div>
       <button className="dx-btn" style={{ fontSize: 18 }} onClick={(e) => { e.stopPropagation(); onClose(); }}>Close</button>
     </div>,
@@ -1786,7 +2195,7 @@ function DeluxeCardDetail({ card, onClose }) {
   );
 }
 
-/* ---------- ice and goo overlays (viewBox matches a 150 x 190 minion plus overhang) ---------- */
+/* ---------- ice and goo overlays (drawn over a 150 x 190 minion plus overhang) ---------- */
 function DxIceOverlay() {
   return (
     <svg className="dx-ice" viewBox="0 0 168 221" preserveAspectRatio="none">
@@ -1810,18 +2219,14 @@ function DxGooOverlay() {
       <defs>
         <linearGradient id="dxGoo" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stopColor="#d4ff5c" /><stop offset="0.5" stopColor="#74e01f" /><stop offset="1" stopColor="#2f9a0c" /></linearGradient>
       </defs>
-      {/* top goo band with a wavy lower edge */}
       <path d="M4 12c0-7 6-10 14-10h132c8 0 14 3 14 10v14c-6 8-12-2-20 4s-12 10-22 4-14-6-22 0-16 8-24 2-14-8-22-2-14 6-22 0-12-2-28-4z" fill="url(#dxGoo)" stroke="#1d5f0a" strokeWidth="2" />
-      {/* side runs + puddle */}
       <path d="M4 22c7 10 8 30 4 54s4 40 2 62-2 40 0 58H2z" fill="url(#dxGoo)" stroke="#1d5f0a" strokeWidth="1.6" />
       <path d="M164 22c-7 12-8 34-4 56s-4 36-2 60 2 40 0 58h8z" fill="url(#dxGoo)" stroke="#1d5f0a" strokeWidth="1.6" />
       <path d="M2 196c14-8 26 4 40-2s24-6 40 0 26 4 42-2 26 2 42 4v12c-28 8-136 8-164 0z" fill="url(#dxGoo)" stroke="#1d5f0a" strokeWidth="1.8" />
-      {/* drips */}
       {[[26, 30, 0], [58, 44, 0.7], [92, 26, 1.3], [120, 50, 0.3], [146, 34, 1.7]].map(([x, len, d], i) => (
         <path key={i} className="dx-drip" style={{ animationDelay: `${d}s` }} d={`M${x - 6} 20q6 ${len * 0.5} 3 ${len * 0.75}a6.5 6.5 0 1 0 6 0q-3 -${len * 0.25} 3 -${len * 0.75}z`} fill="url(#dxGoo)" stroke="#1d5f0a" strokeWidth="1.6" />
       ))}
       <g fill="rgba(255,255,255,0.75)"><ellipse cx="34" cy="9" rx="13" ry="2.6" /><ellipse cx="104" cy="9" rx="20" ry="2.6" /><ellipse cx="60" cy="201" rx="16" ry="2.2" /></g>
-      {/* toxic bubbles */}
       {[[24, 5, 0], [52, 7, 0.8], [84, 4, 1.5], [112, 8, 0.4], [140, 5, 1.1], [68, 3.5, 1.9], [128, 4, 2.0]].map(([x, r, d], i) => (
         <g key={"b" + i} className="dx-bubble" style={{ animationDelay: `${d}s`, animationDuration: `${1.9 + (i % 3) * 0.45}s` }}>
           <circle cx={x} cy="198" r={r} fill="rgba(170,255,70,0.5)" stroke="#e0ffa0" strokeWidth="1.4" />
@@ -1829,6 +2234,184 @@ function DxGooOverlay() {
         </g>
       ))}
     </svg>
+  );
+}
+// Pixel versions: the same two ideas built from square blocks on a 14 x 18 grid.
+const DX_PIX_ICE = (() => {
+  const rnd = mulberry32(77), cells = [];
+  for (let y = 0; y < 18; y++) for (let x = 0; x < 14; x++) {
+    const edge = x === 0 || y === 0 || x === 13 || y === 17;
+    const v = rnd();
+    if (edge) { if (v > 0.12) cells.push([x, y, v > 0.55 ? "#ffffff" : "#bfe9ff", 0.92, false]); }
+    else if (v > 0.8) cells.push([x, y, "#ffffff", 0.6, v > 0.93]);
+    else if (v > 0.62) cells.push([x, y, "#6ab4ee", 0.5, false]);
+  }
+  return cells;
+})();
+function DxIceOverlayPixel() {
+  return (
+    <svg className="dx-ice" viewBox="0 0 14 21" preserveAspectRatio="none" shapeRendering="crispEdges">
+      <rect x="0" y="0" width="14" height="18" fill="#9fdcff" opacity="0.4" />
+      {DX_PIX_ICE.map(([x, y, c, o, blink], i) => <rect key={i} className={blink ? "dx-pix-cell" : undefined} x={x} y={y} width="1" height="1" fill={c} opacity={o} style={blink ? { animationDelay: `${(i % 5) * 0.4}s` } : undefined} />)}
+      <g fill="#ffffff" opacity="0.8" className="dx-pix-glint"><rect x="2" y="2" width="1" height="1" /><rect x="1" y="3" width="1" height="1" /><rect x="0" y="4" width="1" height="1" /><rect x="3" y="6" width="1" height="1" /><rect x="2" y="7" width="1" height="1" /><rect x="1" y="8" width="1" height="1" /></g>
+      <g fill="#e8f8ff">{[[1, 2], [2, 1], [4, 3], [5, 1], [7, 2], [9, 1], [10, 3], [12, 2]].map(([x, len], i) => <rect key={i} x={x} y="18" width="1" height={len} />)}</g>
+      <g fill="#7cc8ff">{[[1, 2], [4, 3], [7, 2], [10, 3], [12, 2]].map(([x, len], i) => <rect key={i} x={x} y={18 + len - 1} width="1" height="1" />)}</g>
+      <g fill="#ffffff">{[[2, 0], [6, 0.8], [9, 0.3], [12, 1.4], [4, 1.8]].map(([x, d], i) => <rect key={i} className="dx-pix-snow" x={x} y="-1" width="1" height="1" style={{ animationDelay: `${d}s` }} />)}</g>
+    </svg>
+  );
+}
+function DxGooOverlayPixel() {
+  return (
+    <svg className="dx-goo" viewBox="0 0 14 19" preserveAspectRatio="none" shapeRendering="crispEdges" style={{ overflow: "visible" }}>
+      <rect x="0" y="0" width="14" height="2" fill="#74e01f" />
+      <g fill="#d4ff5c"><rect x="1" y="0" width="3" height="1" /><rect x="6" y="0" width="2" height="1" /><rect x="10" y="0" width="3" height="1" /></g>
+      <g fill="#2f9a0c">{[0, 3, 4, 6, 7, 9, 10, 13].map((x) => <rect key={x} x={x} y="2" width="1" height="1" />)}</g>
+      <g fill="#74e01f">{[0, 13].map((x) => <rect key={x} x={x} y="2" width="1" height="16" />)}</g>
+      <g fill="#2f9a0c">{[3, 6, 9, 12, 15].map((y) => <rect key={y} x="0" y={y} width="1" height="1" />)}{[4, 7, 10, 13, 16].map((y) => <rect key={"r" + y} x="13" y={y} width="1" height="1" />)}</g>
+      {[[2, 5, 0], [5, 7, 0.6], [8, 4, 1.1], [11, 6, 0.3]].map(([x, len, d], i) => (
+        <g key={i} className="dx-pix-drip" style={{ animationDelay: `${d}s` }}>
+          <rect x={x} y="2" width="1" height={len} fill="#74e01f" /><rect x={x} y={2 + len - 1} width="1" height="1" fill="#d4ff5c" />
+        </g>
+      ))}
+      <rect x="0" y="17" width="14" height="1" fill="#74e01f" /><g fill="#2f9a0c">{[1, 5, 8, 12].map((x) => <rect key={x} x={x} y="18" width="2" height="1" />)}</g>
+      {[[2, 0], [4, 0.9], [7, 0.4], [10, 1.3], [12, 0.7]].map(([x, d], i) => (
+        <g key={"b" + i} className="dx-pix-bubble" style={{ animationDelay: `${d}s` }}><rect x={x} y="17" width="1" height="1" fill="#b6ff3c" /><rect x={x} y="17" width="0.5" height="0.5" fill="#ffffff" /></g>
+      ))}
+    </svg>
+  );
+}
+
+/* ---------- blood ---------- */
+function dxSplatShapes(seed, kind) {
+  const rnd = mulberry32(seed);
+  const kill = kind === "kill";
+  const R = kill ? 58 + rnd() * 22 : 24 + rnd() * 11;
+  const closed = (pts) => {
+    const mid = (a, b) => [(a[0] + b[0]) / 2, (a[1] + b[1]) / 2];
+    let m = mid(pts[pts.length - 1], pts[0]);
+    let d = `M${m[0].toFixed(1)} ${m[1].toFixed(1)}`;
+    pts.forEach((p, i) => { const nx = mid(p, pts[(i + 1) % pts.length]); d += `Q${p[0].toFixed(1)} ${p[1].toFixed(1)} ${nx[0].toFixed(1)} ${nx[1].toFixed(1)}`; });
+    return d + "Z";
+  };
+  const n = 14, main = [];
+  for (let i = 0; i < n; i++) {
+    const a = (i / n) * Math.PI * 2;
+    let r = R * (0.62 + rnd() * 0.5);
+    if (rnd() > 0.78) r *= 1.5;
+    main.push([Math.cos(a) * r, Math.sin(a) * r * 0.82]);
+  }
+  const drops = [];
+  const dropCount = kill ? 14 + Math.floor(rnd() * 8) : 5 + Math.floor(rnd() * 4);
+  for (let i = 0; i < dropCount; i++) {
+    const a = rnd() * Math.PI * 2, dist = R * (1.1 + rnd() * (kill ? 1.9 : 1.4)), rr = R * (0.05 + rnd() * 0.15);
+    drops.push({ x: Math.cos(a) * dist, y: Math.sin(a) * dist * 0.82, r: rr, tail: rnd() > 0.45, a });
+  }
+  const streaks = [];
+  if (kill) for (let i = 0; i < 3 + Math.floor(rnd() * 3); i++) {
+    const a = rnd() * Math.PI * 2, len = R * (1.5 + rnd() * 1.1), wdt = R * (0.1 + rnd() * 0.08);
+    const ex = Math.cos(a) * len, ey = Math.sin(a) * len * 0.82, px = -Math.sin(a) * wdt, py = Math.cos(a) * wdt;
+    streaks.push(`M${px.toFixed(1)} ${py.toFixed(1)}Q${(ex * 0.5 + px * 1.6).toFixed(1)} ${(ey * 0.5 + py * 1.6).toFixed(1)} ${ex.toFixed(1)} ${ey.toFixed(1)}Q${(ex * 0.5 - px * 1.6).toFixed(1)} ${(ey * 0.5 - py * 1.6).toFixed(1)} ${(-px).toFixed(1)} ${(-py).toFixed(1)}Z`);
+  }
+  const guts = [], chunks = [];
+  if (kill) {
+    for (let g = 0; g < 2 + Math.floor(rnd() * 2); g++) {
+      let x = (rnd() - 0.5) * R * 0.9, y = (rnd() - 0.5) * R * 0.7, ang = rnd() * 6.283;
+      let d = `M${x.toFixed(1)} ${y.toFixed(1)}`;
+      for (let s = 0; s < 5; s++) {
+        ang += (rnd() - 0.5) * 2.6;
+        const cx = x + Math.cos(ang + 1.1) * 13, cy = y + Math.sin(ang + 1.1) * 13;
+        x += Math.cos(ang) * 15; y += Math.sin(ang) * 12;
+        d += `Q${cx.toFixed(1)} ${cy.toFixed(1)} ${x.toFixed(1)} ${y.toFixed(1)}`;
+      }
+      guts.push({ d, w: 6 + rnd() * 3 });
+    }
+    for (let c = 0; c < 4 + Math.floor(rnd() * 3); c++) {
+      const cx = (rnd() - 0.5) * R * 2.2, cy = (rnd() - 0.5) * R * 1.6, s = 3 + rnd() * 5, pts = [];
+      for (let k = 0; k < 5; k++) { const a = (k / 5) * 6.283 + rnd(); pts.push(`${(cx + Math.cos(a) * s * (0.6 + rnd() * 0.7)).toFixed(1)},${(cy + Math.sin(a) * s * (0.6 + rnd() * 0.7)).toFixed(1)}`); }
+      chunks.push({ pts: pts.join(" "), bone: rnd() > 0.72 });
+    }
+  }
+  return { R, main: closed(main), drops, streaks, guts, chunks };
+}
+function DxSplat({ seed, kind }) {
+  const sh = React.useMemo(() => dxSplatShapes(seed, kind), [seed, kind]);
+  const size = kind === "kill" ? 420 : 170;
+  const gid = "dxBl" + seed;
+  return (
+    <svg viewBox={`${-size / 2} ${-size / 2} ${size} ${size}`} width={size} height={size} style={{ display: "block", overflow: "visible" }}>
+      <defs>
+        <radialGradient id={gid}><stop offset="0" stopColor="#3a0303" /><stop offset="0.55" stopColor="#780909" /><stop offset="1" stopColor="#a51212" /></radialGradient>
+      </defs>
+      <g fill={`url(#${gid})`} stroke="#2a0202" strokeOpacity="0.55" strokeWidth="1" opacity="0.94">
+        {sh.streaks.map((d, i) => <path key={"s" + i} d={d} />)}
+        {sh.drops.map((dr, i) => (
+          <g key={"d" + i}>
+            {dr.tail && <path d={`M${(dr.x * 0.5).toFixed(1)} ${(dr.y * 0.5).toFixed(1)}L${dr.x.toFixed(1)} ${dr.y.toFixed(1)}`} stroke="#7a0909" strokeOpacity="0.9" strokeWidth={Math.max(1, dr.r * 0.8)} strokeLinecap="round" />}
+            <ellipse cx={dr.x} cy={dr.y} rx={dr.r * 1.15} ry={dr.r} transform={`rotate(${(dr.a * 180) / Math.PI} ${dr.x} ${dr.y})`} />
+          </g>
+        ))}
+        <path d={sh.main} />
+      </g>
+      <g fill="rgba(255,255,255,0.2)"><ellipse cx={-sh.R * 0.25} cy={-sh.R * 0.3} rx={sh.R * 0.22} ry={sh.R * 0.08} transform="rotate(-20)" /><ellipse cx={sh.R * 0.3} cy={sh.R * 0.1} rx={sh.R * 0.12} ry={sh.R * 0.05} /></g>
+      {sh.guts.map((g, i) => (
+        <g key={"g" + i} fill="none" strokeLinecap="round" strokeLinejoin="round">
+          <path d={g.d} stroke="#4a1010" strokeWidth={g.w + 3} /><path d={g.d} stroke="#c2706c" strokeWidth={g.w} /><path d={g.d} stroke="#efb4aa" strokeWidth={g.w * 0.28} strokeDasharray="5 7" />
+        </g>
+      ))}
+      {sh.chunks.map((c, i) => <polygon key={"c" + i} points={c.pts} fill={c.bone ? "#e8dcc8" : "#6b0f14"} stroke="#2a0202" strokeWidth="1" />)}
+    </svg>
+  );
+}
+function dxPixelSplatURL(seed, kind) {
+  try {
+    const kill = kind === "kill";
+    const S = kill ? 60 : 28;
+    const cv = document.createElement("canvas");
+    cv.width = S; cv.height = S;
+    const ctx = cv.getContext("2d");
+    const rnd = mulberry32(seed);
+    const reds = ["#4a0404", "#7c0808", "#a80e0e", "#cf1c1c"];
+    const blobs = [];
+    for (let i = 0; i < (kill ? 10 : 4); i++) blobs.push([S / 2 + (rnd() - 0.5) * S * 0.5, S / 2 + (rnd() - 0.5) * S * 0.42, S * (0.07 + rnd() * 0.13)]);
+    for (let y = 0; y < S; y++) for (let x = 0; x < S; x++) {
+      let inside = false, depth = 0;
+      blobs.forEach(([bx, by, br]) => { const d = Math.hypot(x - bx, y - by); if (d < br) { inside = true; depth = Math.max(depth, 1 - d / br); } });
+      if (!inside) continue;
+      const v = depth + (rnd() - 0.5) * 0.35;
+      ctx.fillStyle = v > 0.7 ? reds[0] : v > 0.4 ? reds[1] : v > 0.15 ? reds[2] : reds[3];
+      ctx.fillRect(x, y, 1, 1);
+    }
+    for (let i = 0; i < (kill ? 34 : 9); i++) {
+      const a = rnd() * 6.283, dist = S * (0.2 + rnd() * 0.3), s = rnd() > 0.7 ? 2 : 1;
+      ctx.fillStyle = reds[1 + Math.floor(rnd() * 3)];
+      ctx.fillRect(Math.round(S / 2 + Math.cos(a) * dist), Math.round(S / 2 + Math.sin(a) * dist * 0.85), s, s);
+    }
+    if (kill) {
+      for (let i = 0; i < 6; i++) { const x = Math.round(S / 2 + (rnd() - 0.5) * S * 0.5), y = Math.round(S / 2 + (rnd() - 0.5) * S * 0.4); ctx.fillStyle = "#d88a84"; ctx.fillRect(x, y, 2, 1); ctx.fillStyle = "#a85452"; ctx.fillRect(x, y + 1, 2, 1); ctx.fillRect(x + 2, y, 1, 1); }
+      for (let i = 0; i < 3; i++) { ctx.fillStyle = "#e8dcc0"; ctx.fillRect(Math.round(S / 2 + (rnd() - 0.5) * S * 0.6), Math.round(S / 2 + (rnd() - 0.5) * S * 0.5), 2, 1); }
+      ctx.fillStyle = "#f05040"; for (let i = 0; i < 5; i++) ctx.fillRect(Math.round(S / 2 + (rnd() - 0.5) * S * 0.3), Math.round(S / 2 + (rnd() - 0.5) * S * 0.3), 1, 1);
+    }
+    return cv.toDataURL("image/png");
+  } catch (e) { return ""; }
+}
+function DxSplatPixel({ seed, kind }) {
+  const url = React.useMemo(() => dxPixelSplatURL(seed, kind), [seed, kind]);
+  const size = kind === "kill" ? 360 : 168;
+  return url ? <img className="dx-pixelated" src={url} alt="" draggable={false} style={{ display: "block", width: size, height: size }} /> : null;
+}
+// One blood mark on the table: the lasting stain plus a short burst of flying drops.
+function DxDecal({ decal, pixel }) {
+  const drops = React.useMemo(() => {
+    const rnd = mulberry32(decal.seed + 5), out = [];
+    const n = decal.kind === "kill" ? 14 : 7, reach = decal.kind === "kill" ? 170 : 80;
+    for (let i = 0; i < n; i++) { const a = rnd() * 6.283, d = reach * (0.35 + rnd() * 0.65); out.push({ bx: Math.cos(a) * d, by: Math.sin(a) * d * 0.8 - 20, delay: rnd() * 0.08, s: 0.6 + rnd() * 0.9 }); }
+    return out;
+  }, [decal.seed, decal.kind]);
+  return (
+    <div className="dx-decal" style={{ left: decal.x, top: decal.y, "--life": `${decal.life}s` }}>
+      {pixel ? <DxSplatPixel seed={decal.seed} kind={decal.kind} /> : <DxSplat seed={decal.seed} kind={decal.kind} />}
+      {drops.map((d, i) => <div key={i} className="dx-droplet" style={{ "--bx": `${d.bx.toFixed(0)}px`, "--by": `${d.by.toFixed(0)}px`, animationDelay: `${d.delay.toFixed(2)}s`, width: 11 * d.s, height: 11 * d.s }} />)}
+    </div>
   );
 }
 
@@ -1840,43 +2423,57 @@ const DX_SHARDS = [
   { clip: "polygon(0 45%,42% 38%,62% 52%,48% 100%,0 100%)", sx: "-80px", sy: "30px", sr: "-26deg", srx: "-60deg", sry: "-30deg" },
   { clip: "polygon(100% 40%,100% 100%,48% 100%,62% 52%)", sx: "90px", sy: "40px", sr: "32deg", srx: "55deg", sry: "35deg" },
 ];
-function DxMinionFace({ m, card, showStatus }) {
+// Pixel Art death: the card falls apart into a 3 x 4 grid of blocks.
+const DX_TILES = (() => {
+  const out = [], rnd = mulberry32(31);
+  for (let row = 0; row < 4; row++) for (let col = 0; col < 3; col++) {
+    out.push({
+      clip: `inset(${row * 25}% ${(2 - col) * 33.34}% ${(3 - row) * 25}% ${col * 33.33}%)`,
+      tx: `${Math.round((col - 1) * 46 + (rnd() - 0.5) * 50)}px`, ty: `${Math.round(60 + row * 18 + rnd() * 90)}px`, delay: (3 - row) * 0.04 + rnd() * 0.05,
+    });
+  }
+  return out;
+})();
+function DxMinionFace({ m, card, showStatus, pixel }) {
   const r = DX_RARITY[card.rarity] || DX_RARITY.common;
   const damaged = m.hp < m.maxHp;
   const base = m.cardId ? findCard(m.cardId) : null;
   const buffedAtk = base ? m.atk > base.atk : false;
   const chips = (m.keywords || []).filter((k) => DX_KEYWORD_ICONS[k]);
   const taunt = (m.keywords || []).includes("Taunt");
+  const num = (n) => (String(n).length > 1 ? (pixel ? 16 : 22) : (pixel ? 24 : 26));
   return (
     <>
-      <div className="dx-minion-frame" style={{ background: r.frame }} />
+      <div className="dx-minion-frame" style={{ "--rf": r.frame, "--rs": r.solid }} />
       <div className="dx-minion-art"><DeluxeArt card={card} /></div>
-      <div style={{ position: "absolute", left: 30, right: 30, bottom: 9, textAlign: "center", fontFamily: DX_DISPLAY_FONT, fontStretch: "condensed", fontWeight: 700, fontSize: 13, lineHeight: 1.05, textTransform: "uppercase", letterSpacing: "0.02em", color: "#fff", textShadow: "0 1px 2px #000, 0 0 6px #000", maxHeight: 42, overflow: "hidden" }}>{m.name}</div>
+      <div className="dx-minion-name">{m.name}</div>
       {taunt && (
-        <div style={{ position: "absolute", left: "50%", top: -15, transform: "translateX(-50%)", display: "flex", alignItems: "center", gap: 3, padding: "2px 8px 2px 5px", borderRadius: 8, background: "linear-gradient(180deg,#d7dde4,#7c858f)", border: "2px solid #1b1e22", fontFamily: DX_DISPLAY_FONT, fontWeight: 800, fontSize: 12, letterSpacing: "0.08em", color: "#14171a", boxShadow: "0 2px 4px rgba(0,0,0,0.6)", zIndex: 14 }}>
+        <div className="dx-taunt-tab">
           <svg viewBox="0 0 24 24" width="13" height="13"><path d="M12 2l8 3v6c0 5-3.4 9-8 11-4.6-2-8-6-8-11V5l8-3z" fill="#14171a" /></svg>TAUNT
         </div>
       )}
       {chips.length > 0 && (
         <div style={{ position: "absolute", left: -7, top: 14, display: "flex", flexDirection: "column", gap: 4, zIndex: 14 }}>
           {chips.map((k) => (
-            <div key={k} title={DX_KEYWORD_ICONS[k].tip} style={{ width: 26, height: 26, borderRadius: "50%", background: DX_KEYWORD_ICONS[k].bg, border: "2px solid #0d0d0d", display: "flex", alignItems: "center", justifyContent: "center", boxShadow: "0 2px 4px rgba(0,0,0,0.6)" }}>
+            <div key={k} className="dx-chip" title={DX_KEYWORD_ICONS[k].tip} style={{ background: DX_KEYWORD_ICONS[k].bg }}>
               <svg viewBox="0 0 24 24" width="16" height="16"><path fillRule="evenodd" d={DX_KEYWORD_ICONS[k].d} fill={k === "Merchant" ? "none" : DX_KEYWORD_ICONS[k].fg} stroke={DX_KEYWORD_ICONS[k].fg} strokeWidth={k === "Merchant" ? 2 : 0.6} strokeLinejoin="round" /></svg>
             </div>
           ))}
         </div>
       )}
-      {showStatus && (m.keywords || []).includes("Toxic") && <DxGooOverlay />}
+      {showStatus && (m.keywords || []).includes("Toxic") && (pixel ? <DxGooOverlayPixel /> : <DxGooOverlay />)}
       {showStatus && m.shielded && <div className="dx-shield" />}
-      {showStatus && m.frozen && <DxIceOverlay />}
-      <div className="dx-badge dx-badge-atk" style={{ left: -10, bottom: -10, width: 46, height: 46, fontSize: 26, zIndex: 15, color: buffedAtk ? "#b9ffb0" : "#fff" }}>{m.atk}</div>
-      <div className="dx-badge dx-badge-hp" style={{ right: -10, bottom: -10, width: 44, height: 50, fontSize: 26, zIndex: 15, color: damaged ? "#ffd24a" : "#fff" }}>{Math.max(0, m.hp)}</div>
+      {showStatus && isFrozenNow(m) && (pixel ? <DxIceOverlayPixel /> : <DxIceOverlay />)}
+      <div className="dx-badge dx-badge-atk" style={{ left: -10, bottom: -10, width: 46, height: 46, fontSize: num(m.atk), zIndex: 15, color: buffedAtk ? "#b9ffb0" : "#fff" }}>{m.atk}</div>
+      <div className="dx-badge dx-badge-hp" style={{ right: -10, bottom: -10, width: 44, height: pixel ? 46 : 50, fontSize: num(Math.max(0, m.hp)), zIndex: 15, color: damaged ? "#ffd24a" : "#fff" }}>{Math.max(0, m.hp)}</div>
     </>
   );
 }
 function DeluxeMinion({ m, scale = 1, onClick, selected, targetable, isEnemy, myTurn, side }) {
+  const pixel = useDisplay().mode === "pixel";
   const card = cardLikeForMinion(m);
   const dying = !!m.__dying;
+  const frozen = isFrozenNow(m);
   const [showDetail, setShowDetail] = useState(false);
   const [fx, setFx] = useState(null); // {id, text, color}
   const [hit, setHit] = useState(false);
@@ -1885,7 +2482,7 @@ function DeluxeMinion({ m, scale = 1, onClick, selected, targetable, isEnemy, my
   const longPressFired = useRef(false);
 
   useEffect(() => {
-    if (dying) return;
+    if (dying) return undefined;
     const p = prev.current;
     let next = null;
     if (m.hp < p.hp) next = { text: `-${p.hp - m.hp}`, color: "#ff5a48", hit: true };
@@ -1893,7 +2490,7 @@ function DeluxeMinion({ m, scale = 1, onClick, selected, targetable, isEnemy, my
     else if (p.shielded && !m.shielded) next = { text: "BLOCKED", color: "#bfe9ff", hit: true };
     else if (m.atk > p.atk) next = { text: `+${m.atk - p.atk} ATK`, color: "#ffd24a" };
     prev.current = { hp: m.hp, shielded: m.shielded, atk: m.atk };
-    if (!next) return;
+    if (!next) return undefined;
     setFx({ ...next, id: Date.now() + Math.random() });
     if (next.hit) setHit(true);
     const t1 = setTimeout(() => setHit(false), 460);
@@ -1912,6 +2509,7 @@ function DeluxeMinion({ m, scale = 1, onClick, selected, targetable, isEnemy, my
   };
   const spent = !isEnemy && !m.canAttack;
   const ready = !isEnemy && myTurn && m.canAttack && !selected && !targetable;
+  const taunt = (m.keywords || []).includes("Taunt");
   const cls = ["dx-slot"];
   if (dying) cls.push("dx-dying");
   else {
@@ -1920,9 +2518,9 @@ function DeluxeMinion({ m, scale = 1, onClick, selected, targetable, isEnemy, my
     if (selected) cls.push("dx-selected");
     if (targetable) cls.push("dx-targetable");
     if (hit) cls.push("dx-hit");
-    if (m.frozen) cls.push("dx-frozen");
+    if (frozen) cls.push("dx-frozen");
     if ((m.keywords || []).includes("Toxic")) cls.push("dx-toxic");
-    if ((m.keywords || []).includes("Taunt")) cls.push("dx-minion-taunt");
+    if (taunt) cls.push("dx-minion-taunt");
   }
   return (
     <>
@@ -1941,11 +2539,17 @@ function DeluxeMinion({ m, scale = 1, onClick, selected, targetable, isEnemy, my
           {dying ? (
             <>
               <div className="dx-death-flash" />
-              {DX_SHARDS.map((sh, i) => (
-                <div key={i} className={"dx-shard" + ((m.keywords || []).includes("Taunt") ? " dx-minion-taunt" : "")} style={{ clipPath: sh.clip, WebkitClipPath: sh.clip, "--sx": sh.sx, "--sy": sh.sy, "--sr": sh.sr, "--srx": sh.srx, "--sry": sh.sry }}>
-                  <DxMinionFace m={m} card={card} showStatus={false} />
-                </div>
-              ))}
+              {pixel
+                ? DX_TILES.map((t, i) => (
+                  <div key={i} className={"dx-tile" + (taunt ? " dx-minion-taunt" : "")} style={{ clipPath: t.clip, WebkitClipPath: t.clip, "--tx": t.tx, "--ty": t.ty, animationDelay: `${t.delay.toFixed(2)}s` }}>
+                    <DxMinionFace m={m} card={card} showStatus={false} pixel />
+                  </div>
+                ))
+                : DX_SHARDS.map((sh, i) => (
+                  <div key={i} className={"dx-shard" + (taunt ? " dx-minion-taunt" : "")} style={{ clipPath: sh.clip, WebkitClipPath: sh.clip, "--sx": sh.sx, "--sy": sh.sy, "--sr": sh.sr, "--srx": sh.srx, "--sry": sh.sry }}>
+                    <DxMinionFace m={m} card={card} showStatus={false} pixel={false} />
+                  </div>
+                ))}
               {Array.from({ length: 9 }).map((_, i) => {
                 const ang = (i / 9) * Math.PI * 2 + 0.4;
                 return <div key={"e" + i} className="dx-ember" style={{ "--ex": `${Math.cos(ang) * (70 + (i % 3) * 30)}px`, "--ey": `${Math.sin(ang) * 60 - 90 - (i % 4) * 22}px`, animationDelay: `${0.05 + (i % 3) * 0.06}s` }} />;
@@ -1954,12 +2558,12 @@ function DeluxeMinion({ m, scale = 1, onClick, selected, targetable, isEnemy, my
           ) : (
             <div className="dx-minion-hit">
               <div className="dx-minion-body">
-                <DxMinionFace m={m} card={card} showStatus />
-                {spent && !m.frozen && <div style={{ position: "absolute", right: 8, top: 8, fontFamily: DX_DISPLAY_FONT, fontWeight: 800, fontSize: 15, color: "#dfe6ee", textShadow: "0 1px 3px #000", zIndex: 14 }}>Zzz</div>}
+                <DxMinionFace m={m} card={card} showStatus pixel={pixel} />
+                {spent && !frozen && <div style={{ position: "absolute", right: 8, top: 8, fontFamily: DX_DISPLAY_FONT, fontWeight: 800, fontSize: 15, color: "#dfe6ee", textShadow: pixel ? "2px 2px 0 #0a0a06" : "0 1px 3px #000", zIndex: 14 }}>Zzz</div>}
               </div>
             </div>
           )}
-          {fx && <div key={fx.id} className="dx-floater" style={{ color: fx.color, fontSize: fx.text.length > 4 ? 22 : 40 }}>{fx.text}</div>}
+          {fx && <div key={fx.id} className="dx-floater" style={{ color: fx.color, fontSize: fx.text.length > 4 ? (pixel ? 16 : 22) : 40 }}>{fx.text}</div>}
         </div>
       </div>
       {showDetail && <DeluxeCardDetail card={card} onClose={() => setShowDetail(false)} />}
@@ -1967,78 +2571,17 @@ function DeluxeMinion({ m, scale = 1, onClick, selected, targetable, isEnemy, my
   );
 }
 
-/* ---------- Settings screen (reached from the top menu) ---------- */
-function SettingsScreen({ onBack }) {
-  const display = useDisplay();
-  const sample = findCardByName("Albert Tesla") || CARD_DB[0];
-  const optionStyle = (active) => ({
-    display: "flex", gap: 10, alignItems: "flex-start", textAlign: "left", width: "100%", boxSizing: "border-box", padding: "10px 12px", marginTop: 8,
-    fontFamily: FONT, border: `2px solid ${active ? "#000" : "#999"}`, borderRadius: 6, background: active ? "#f3f3f3" : "#fff",
-    boxShadow: active ? "0 0 0 2px #000" : "none", cursor: "pointer", color: "#111",
-  });
-  return (
-    <div style={{ fontFamily: FONT, padding: "8px 20px 28px", maxWidth: 640, margin: "0 auto" }}>
-      <h2 style={{ fontSize: 18, borderBottom: "2px solid #000", paddingBottom: 6 }}>Settings</h2>
-      <div style={{ fontWeight: 700, fontSize: 14, marginTop: 12 }}>Display Options</div>
-      <div style={{ fontSize: 11, color: "#555", marginTop: 2 }}>Changes how the game looks on this device only. It never changes the rules, your cards or your rank.</div>
-      {DISPLAY_MODES.map((mode) => {
-        const active = display.mode === mode.id;
-        return (
-          <button key={mode.id} onClick={() => display.setDisplay({ mode: mode.id })} style={optionStyle(active)} aria-pressed={active}>
-            <span style={{ width: 16, height: 16, minWidth: 16, borderRadius: "50%", border: "2px solid #000", marginTop: 1, display: "flex", alignItems: "center", justifyContent: "center" }}>
-              {active && <span style={{ width: 8, height: 8, borderRadius: "50%", background: "#000" }} />}
-            </span>
-            <span>
-              <span style={{ display: "block", fontWeight: 700, fontSize: 13 }}>{mode.name}{mode.id === DEFAULT_DISPLAY.mode ? " (default)" : ""}</span>
-              <span style={{ display: "block", fontSize: 11, color: "#555", marginTop: 2 }}>{mode.desc}</span>
-            </span>
-          </button>
-        );
-      })}
-
-      <div style={{ marginTop: 16 }}>
-        <div style={{ fontWeight: 700, fontSize: 14 }}>Board Style</div>
-        <div style={{ fontSize: 11, color: "#555", marginTop: 2 }}>
-          {display.mode === "deluxe" ? "The table you play on in Full Graphics. You can also switch it during a match from the Menu button." : "Only used by Full Graphics - pick that option above to see it in a match."}
-        </div>
-        <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill,minmax(140px,1fr))", gap: 10, marginTop: 8 }}>
-          {BOARD_STYLES.map((b) => {
-            const active = display.board === b.id;
-            return (
-              <button key={b.id} onClick={() => display.setDisplay({ board: b.id })} aria-pressed={active} style={{ fontFamily: FONT, padding: 0, border: `2px solid ${active ? "#000" : "#999"}`, borderRadius: 6, background: "#fff", boxShadow: active ? "0 0 0 2px #000" : "none", cursor: "pointer", overflow: "hidden", textAlign: "left", color: "#111" }}>
-                <div style={{ position: "relative", height: 84 }}><DeluxeBackdrop styleId={b.id} /></div>
-                <div style={{ padding: "5px 7px 7px" }}>
-                  <div style={{ fontWeight: 700, fontSize: 12 }}>{b.name}</div>
-                  <div style={{ fontSize: 9.5, color: "#555", marginTop: 1 }}>{b.desc}</div>
-                </div>
-              </button>
-            );
-          })}
-        </div>
-      </div>
-
-      <div style={{ marginTop: 16 }}>
-        <div style={{ fontWeight: 700, fontSize: 14 }}>Preview</div>
-        <div style={{ fontSize: 11, color: "#555", marginTop: 2 }}>How a card looks with the option you picked.</div>
-        <div style={{ marginTop: 8, display: "flex", justifyContent: "center", padding: 16, border: "1px dashed #999", borderRadius: 6, position: "relative", overflow: "hidden", minHeight: 170 }}>
-          {display.mode === "deluxe" && <DeluxeBackdrop styleId={display.board} />}
-          <div style={{ position: "relative" }}><MiniCard cardId={sample.id} disabled={false} /></div>
-        </div>
-      </div>
-
-      <button onClick={onBack} style={{ marginTop: 18, padding: "10px 18px", fontFamily: FONT, fontSize: 13, fontWeight: 700, border: "2px solid #000", background: "#000", color: "#fff", cursor: "pointer", borderRadius: 4 }}>← Back</button>
-    </div>
-  );
-}
-
 /* =========================================================================
-   FULL GRAPHICS match screen. GameScreen below still owns every rule and
-   every click handler - this only draws the same match differently, so the
-   two views can never disagree about what a click does.
+   FULL GRAPHICS / PIXEL ART match screen. GameScreen below still owns every
+   rule and every click handler - this only draws the same match differently,
+   so the views can never disagree about what a click does.
    The whole table is laid out on a virtual canvas (at least 1440 x 900 in
    landscape, 720 x 1180 in portrait) and scaled to fill the real window,
    which is what keeps it looking the same on a 16:9 or 16:10 monitor and
    still playable held upright on a phone.
+   Landscape: both heroes sit in the middle of the screen (enemy top, you
+   bottom) with the table between them; your hand is tucked under the bottom
+   edge and rises when the pointer goes down to it (or when it's tapped).
    ========================================================================= */
 function useDxStage() {
   const calc = () => {
@@ -2085,7 +2628,7 @@ function dxNewLogLines(prev, cur) {
 }
 
 // Throws the attacker's card at its target and back, with a flash where it lands.
-function dxLunge(attEl, tgtEl, scale) {
+function dxLunge(attEl, tgtEl, scale, stepped) {
   if (!attEl || !tgtEl || typeof attEl.animate !== "function") return;
   try {
     const a = attEl.getBoundingClientRect(), t = tgtEl.getBoundingClientRect();
@@ -2096,10 +2639,10 @@ function dxLunge(attEl, tgtEl, scale) {
     attEl.style.zIndex = 70;
     const anim = attEl.animate([
       { transform: "translate3d(0,0,0) scale(1) rotate(0deg)" },
-      { transform: `translate3d(${-dx * 0.07}px,${-dy * 0.07}px,0) scale(1.16) rotate(${-5 * lean}deg)`, offset: 0.3 },
-      { transform: `translate3d(${dx * 0.8}px,${dy * 0.8}px,0) scale(1.05) rotate(${7 * lean}deg)`, offset: 0.55 },
+      { transform: `translate3d(${-dx * 0.07}px,${-dy * 0.07}px,0) scale(1.16) rotate(${stepped ? 0 : -5 * lean}deg)`, offset: 0.3 },
+      { transform: `translate3d(${dx * 0.8}px,${dy * 0.8}px,0) scale(1.05) rotate(${stepped ? 0 : 7 * lean}deg)`, offset: 0.55 },
       { transform: "translate3d(0,0,0) scale(1) rotate(0deg)" },
-    ], { duration: 580, easing: "cubic-bezier(.3,.1,.3,1)" });
+    ], { duration: 580, easing: stepped ? "steps(9)" : "cubic-bezier(.3,.1,.3,1)" });
     anim.onfinish = anim.oncancel = () => { attEl.style.zIndex = oldZ; };
     setTimeout(() => {
       tgtEl.classList.add("dx-impact");
@@ -2108,25 +2651,18 @@ function dxLunge(attEl, tgtEl, scale) {
   } catch (e) {}
 }
 
-function DxCrystals({ mana, maxMana, size }) {
+// Action Points as a row of ten dots: lit = available, dark = spent this turn, faint = not unlocked yet.
+function DxDots({ mana, maxMana, size }) {
   return (
-    <div style={{ display: "flex", gap: size * 0.55, alignItems: "center", paddingLeft: size * 0.2 }} title={`${mana} of ${maxMana} AP available`}>
-      {Array.from({ length: 10 }).map((_, i) => {
-        const filled = i < mana, socket = i < maxMana;
-        return (
-          <div key={i} style={{
-            width: size, height: size, transform: "rotate(45deg)", borderRadius: size * 0.18, flexShrink: 0,
-            background: filled ? "radial-gradient(circle at 35% 30%,#e3ffec,#3be07a 45%,#0d7a38)" : socket ? "#10301d" : "rgba(255,255,255,0.07)",
-            border: `1.5px solid ${filled ? "#05301a" : socket ? "#1d5a36" : "rgba(255,255,255,0.1)"}`,
-            boxShadow: filled ? "0 0 8px rgba(70,255,140,0.85)" : "none",
-          }} />
-        );
-      })}
+    <div style={{ display: "flex", gap: size * 0.42, alignItems: "center" }} title={`${mana} of ${maxMana} AP available`}>
+      {Array.from({ length: 10 }).map((_, i) => (
+        <div key={i} className={"dx-dot" + (i < mana ? " dx-dot-on" : i < maxMana ? " dx-dot-socket" : "")} style={{ width: size, height: size }} />
+      ))}
     </div>
   );
 }
 
-function DxHeroPlate({ player, side, u, wide, portraitSize = 96, targetable, attackable, onClick, children }) {
+function DxHeroPlate({ player, side, u, wide, portraitSize = 92, targetable, attackable, onClick, children, pixel }) {
   const fac = dxFaction(player.hero);
   const [fx, setFx] = useState(null);
   const [hit, setHit] = useState(false);
@@ -2139,7 +2675,7 @@ function DxHeroPlate({ player, side, u, wide, portraitSize = 96, targetable, att
     else if (player.health > p.health) next = { text: `+${player.health - p.health}`, color: "#7dff9a" };
     else if (player.armor > p.armor) next = { text: `+${player.armor - p.armor} ARMOR`, color: "#cfd8e3" };
     prev.current = { health: player.health, armor: player.armor };
-    if (!next) return;
+    if (!next) return undefined;
     setFx({ ...next, id: Date.now() + Math.random() });
     if (next.hit) setHit(true);
     const t1 = setTimeout(() => setHit(false), 460);
@@ -2147,8 +2683,10 @@ function DxHeroPlate({ player, side, u, wide, portraitSize = 96, targetable, att
     return () => { clearTimeout(t1); clearTimeout(t2); };
   }, [player.health, player.armor]);
   const P = portraitSize * u; // hero picture size
+  const fs = (n) => (pixel ? Math.max(12, Math.round(n * 0.86)) : n) * u;
   const highlighted = targetable || attackable;
   const hpFrac = Math.max(0, Math.min(1, player.health / player.maxHealth));
+  const rad = pixel ? 0 : 1;
   return (
     <div
       data-dx-hero={side}
@@ -2157,41 +2695,37 @@ function DxHeroPlate({ player, side, u, wide, portraitSize = 96, targetable, att
       style={{ position: "relative", display: "flex", alignItems: "center", gap: 12 * u, padding: 10 * u, width: "100%", height: "100%", cursor: onClick ? "pointer" : "default", borderTop: `4px solid ${fac.c}` }}
     >
       <div style={{ position: "relative", width: P, height: P, flexShrink: 0 }}>
-        <div style={{ width: "100%", height: "100%", borderRadius: 14 * u, padding: 4 * u, background: `linear-gradient(155deg,#fff 0%,${fac.c} 30%,${fac.dark} 100%)`, boxShadow: "0 4px 8px rgba(0,0,0,0.6)" }}>
-          <div style={{ width: "100%", height: "100%", borderRadius: 10 * u, overflow: "hidden", background: "#111" }}>
-            {HERO_ART_OVERRIDES[player.hero] ? <img src={HERO_ART_OVERRIDES[player.hero]} alt={player.hero} draggable={false} style={{ width: "100%", height: "100%", objectFit: "cover" }} /> : <DeluxeArt card={{ name: player.hero, id: player.hero, hero: player.hero }} />}
-          </div>
+        <div style={{ width: "100%", height: "100%", borderRadius: 14 * u * rad, padding: 4 * u, background: pixel ? fac.c : `linear-gradient(155deg,#fff 0%,${fac.c} 30%,${fac.dark} 100%)`, boxShadow: pixel ? "0 0 0 3px #0a0a06" : "0 4px 8px rgba(0,0,0,0.6)" }}>
+          <div style={{ width: "100%", height: "100%", borderRadius: 10 * u * rad, overflow: "hidden", background: "#111" }}><DxHeroArt hero={player.hero} /></div>
         </div>
-        <div className="dx-badge dx-badge-hp" style={{ right: -10 * u, bottom: -10 * u, width: 46 * u, height: 52 * u, fontSize: 25 * u, color: player.health < player.maxHealth ? "#ffd24a" : "#fff" }}>{Math.max(0, player.health)}</div>
-        {player.armor > 0 && (
-          <div className="dx-badge" style={{ left: -10 * u, bottom: -10 * u, width: 42 * u, height: 48 * u, fontSize: 23 * u, borderRadius: "22% 22% 50% 50% / 18% 18% 62% 62%", border: "3px solid #1c2026", background: "radial-gradient(circle at 34% 28%,#f4f7fa,#9aa5b1 45%,#4d5661)" }} title="Armor">{player.armor}</div>
-        )}
+        <div className="dx-badge dx-badge-hp" style={{ right: -10 * u, bottom: -10 * u, width: 46 * u, height: (pixel ? 46 : 52) * u, fontSize: (pixel ? (String(Math.max(0, player.health)).length > 1 ? 16 : 24) : 25) * u, color: player.health < player.maxHealth ? "#ffd24a" : "#fff" }} title="Health">{Math.max(0, player.health)}</div>
+        {player.armor > 0 && <div className="dx-badge dx-badge-armor" style={{ left: -10 * u, bottom: -10 * u, width: 42 * u, height: (pixel ? 42 : 48) * u, fontSize: (pixel ? 16 : 23) * u }} title="Armor">{player.armor}</div>}
       </div>
       <div style={{ flex: 1, minWidth: 0 }}>
         <div className="dx-display" style={{ fontWeight: 800, color: "#fff", lineHeight: 1.05 }}>
-          <MarqueeText text={player.displayName || player.hero} width="100%" fontSize={21 * u} bold color="#fff" duration={7} />
+          <MarqueeText text={player.displayName || player.hero} width="100%" fontSize={fs(21)} bold color="#fff" duration={7} />
         </div>
-        <div className="dx-display" style={{ fontSize: 12.5 * u, fontWeight: 700, color: fac.c, letterSpacing: "0.14em", whiteSpace: "nowrap" }}>{player.hero}</div>
-        <div style={{ height: 7 * u, borderRadius: 4 * u, background: "#3a0d09", border: "1px solid #000", overflow: "hidden", marginTop: 3 * u }}>
-          <div style={{ width: `${hpFrac * 100}%`, height: "100%", background: "linear-gradient(180deg,#ff8a6a,#d2281a)", transition: "width 0.4s" }} />
+        <div className="dx-display" style={{ fontSize: fs(12.5), fontWeight: 700, color: fac.c, letterSpacing: "0.14em", whiteSpace: "nowrap" }}>{player.hero}</div>
+        <div style={{ height: 7 * u, borderRadius: 4 * u * rad, background: "#3a0d09", border: "1px solid #000", overflow: "hidden", marginTop: 3 * u }}>
+          <div style={{ width: `${hpFrac * 100}%`, height: "100%", background: pixel ? "#d2281a" : "linear-gradient(180deg,#ff8a6a,#d2281a)", transition: "width 0.4s" }} />
         </div>
-        <div style={{ display: "flex", alignItems: "center", gap: 8 * u, marginTop: 6 * u }}>
-          <span className="dx-display" style={{ fontSize: 15 * u, fontWeight: 800, color: "#8dffb0", whiteSpace: "nowrap" }}>AP {player.mana}/{player.maxMana}</span>
-          {wide && <DxCrystals mana={player.mana} maxMana={player.maxMana} size={11 * u} />}
+        <div style={{ display: "flex", alignItems: "center", gap: 9 * u, marginTop: 6 * u }}>
+          <span className="dx-display" style={{ fontSize: fs(15), fontWeight: 800, color: "#8dffb0", whiteSpace: "nowrap" }}>AP {player.mana}/{player.maxMana}</span>
+          {wide && <DxDots mana={player.mana} maxMana={player.maxMana} size={11 * u} />}
         </div>
-        {!wide && <div style={{ marginTop: 7 * u }}><DxCrystals mana={player.mana} maxMana={player.maxMana} size={9 * u} /></div>}
-        <div style={{ fontSize: 13 * u, color: "#c9c2b3", marginTop: 5 * u, whiteSpace: "nowrap" }}>Deck {player.deck.length} · Hand {player.hand.length}</div>
+        {!wide && <div style={{ marginTop: 6 * u }}><DxDots mana={player.mana} maxMana={player.maxMana} size={10 * u} /></div>}
+        <div style={{ fontSize: fs(13), color: "#c9c2b3", marginTop: 5 * u, whiteSpace: "nowrap" }}>Deck {player.deck.length} · Hand {player.hand.length}</div>
       </div>
       {children}
-      {fx && <div key={fx.id} className="dx-floater" style={{ color: fx.color, fontSize: (fx.text.length > 4 ? 24 : 46) * u, left: P / 2 + 10 * u }}>{fx.text}</div>}
+      {fx && <div key={fx.id} className="dx-floater" style={{ color: fx.color, fontSize: (fx.text.length > 4 ? (pixel ? 16 : 24) : 46) * u, left: P / 2 + 10 * u }}>{fx.text}</div>}
     </div>
   );
 }
 
-function DxModal({ children, z = 200, onBackdrop, maxWidth }) {
+function DxModal({ children, z = 200, onBackdrop, maxWidth, plain }) {
   return (
-    <div className="dx-modal" style={{ position: "absolute", inset: 0, background: "rgba(5,5,6,0.76)", display: "flex", alignItems: "center", justifyContent: "center", zIndex: z, padding: 20 }} onClick={onBackdrop}>
-      <div className="dx-panel dx-pop" onClick={(e) => e.stopPropagation()} style={{ padding: 26, textAlign: "center", maxWidth: maxWidth || "92%", maxHeight: "94%", overflowY: "auto" }}>
+    <div className="dx-modal" style={{ position: "absolute", inset: 0, background: plain ? "rgba(5,5,6,0.88)" : "rgba(5,5,6,0.76)", display: "flex", alignItems: "center", justifyContent: "center", zIndex: z, padding: 20 }} onClick={onBackdrop}>
+      <div className={plain ? "dx-pop" : "dx-panel dx-pop"} onClick={(e) => e.stopPropagation()} style={{ padding: 26, textAlign: "center", maxWidth: maxWidth || "92%", maxHeight: "94%", overflowY: "auto" }}>
         {children}
       </div>
     </div>
@@ -2200,32 +2734,69 @@ function DxModal({ children, z = 200, onBackdrop, maxWidth }) {
 
 function DeluxeGame({ g }) {
   const display = useDisplay();
+  const pixel = display.mode === "pixel";
   const { state, me, opp, myIdx, myTurn, pending, attacker, onAction } = g;
   const oppIdx = myIdx === 0 ? 1 : 0;
   const { portrait, W, H, scale } = useDxStage();
   const u = portrait ? 1.4 : 1;
-  const boardDef = BOARD_STYLES.find((b) => b.id === display.board) || BOARD_STYLES[0];
+  const T = (n) => (pixel ? Math.max(13, Math.round(n * 0.9)) : n) * u; // text size (the pixel font needs a floor to stay readable)
+  // A different table every match, picked at random.
+  const [boardId] = useState(() => BOARD_STYLES[Math.floor(Math.random() * BOARD_STYLES.length)].id);
+  const boardDef = BOARD_STYLES.find((b) => b.id === boardId) || BOARD_STYLES[0];
   const [menuOpen, setMenuOpen] = useState(false);
   const [logOpen, setLogOpen] = useState(false);
   const [banner, setBanner] = useState(null);
   const [reveals, setReveals] = useState([]);
+  const [decals, setDecals] = useState([]);     // blood left on the table
+  const [handUp, setHandUp] = useState(false);  // landscape: is the hand raised out of its tray?
+  const [focusIdx, setFocusIdx] = useState(null); // touch: which hand card is brought to the front
+  const [touchMode, setTouchMode] = useState(false);
   const rootRef = useRef(null);
   const prevStateRef = useRef(null);
   const scaleRef = useRef(scale);
   scaleRef.current = scale;
 
-  // Turn the plain game log into motion: attacks lunge, played cards flip into view.
+  // Turn state changes into motion: blood where minions are hit or die,
+  // attacks lunge, played cards flip into view.
   useEffect(() => {
     const prev = prevStateRef.current;
     prevStateRef.current = state;
-    if (!prev || !rootRef.current) return;
-    const lines = dxNewLogLines(prev.log, state.log);
-    if (!lines.length) return;
     const root = rootRef.current;
-    const actor = prev.turn;
-    const foe = actor === 0 ? 1 : 0;
+    if (!prev || !root) return;
     const sideOf = (idx) => (idx === myIdx ? "me" : "opp");
     const elFor = (uid) => (uid ? root.querySelector(`[data-dx-uid="${uid}"]`) : null);
+
+    const fresh = [];
+    [0, 1].forEach((idx) => {
+      const lane = root.querySelector(`[data-dx-lane="${sideOf(idx)}"]`);
+      if (!lane) return;
+      const lr = lane.getBoundingClientRect();
+      (prev.players[idx].board || []).forEach((m) => {
+        const now = state.players[idx].board.find((x) => x.uid === m.uid);
+        const kind = !now ? "kill" : now.hp < m.hp ? "hit" : null;
+        if (!kind) return;
+        const el = elFor(m.uid);
+        if (!el) return;
+        const r = el.getBoundingClientRect();
+        const seed = Math.floor(Math.random() * 1e9);
+        // A kill leaves its mess where the minion stood; a hit sprays out past the edge of the card
+        // (straight under the card it would never be seen).
+        const ang = Math.random() * Math.PI * 2;
+        const off = kind === "kill" ? 0.12 : 0.5;
+        fresh.push({
+          id: seed + ":" + Date.now(), seed, kind, lane: sideOf(idx), born: Date.now(),
+          x: (r.left + r.width * (0.5 + Math.cos(ang) * off) - lr.left) / scaleRef.current,
+          y: (r.top + r.height * (0.52 + Math.sin(ang) * off) - lr.top) / scaleRef.current,
+          life: pixel ? (kind === "kill" ? 240 : 90) : (kind === "kill" ? 60 : 26),
+        });
+      });
+    });
+    if (fresh.length) setDecals((d) => [...d, ...fresh].slice(pixel ? -90 : -44));
+
+    const lines = dxNewLogLines(prev.log, state.log);
+    if (!lines.length) return;
+    const actor = prev.turn;
+    const foe = actor === 0 ? 1 : 0;
     const changed = (m, nowBoard) => { const n = nowBoard.find((x) => x.uid === m.uid); return !n || n.hp !== m.hp || n.shielded !== m.shielded || n.canAttack !== m.canAttack; };
     const pick = (board, nowBoard, name, needReady) => {
       const named = board.filter((m) => m.name === name && (!needReady || m.canAttack));
@@ -2236,11 +2807,11 @@ function DeluxeGame({ g }) {
       let mt;
       if ((mt = /^(.+) attacks (.+) for (\d+)\.$/.exec(text))) {
         const att = pick(prev.players[actor].board, state.players[actor].board, mt[1], true);
-        dxLunge(att && elFor(att.uid), root.querySelector(`[data-dx-hero="${sideOf(foe)}"]`), scaleRef.current);
+        dxLunge(att && elFor(att.uid), root.querySelector(`[data-dx-hero="${sideOf(foe)}"]`), scaleRef.current, pixel);
       } else if ((mt = /^(.+) clashes with (.+)\.$/.exec(text))) {
         const att = pick(prev.players[actor].board, state.players[actor].board, mt[1], true);
         const def = pick(prev.players[foe].board, state.players[foe].board, mt[2], false);
-        dxLunge(att && elFor(att.uid), def && elFor(def.uid), scaleRef.current);
+        dxLunge(att && elFor(att.uid), def && elFor(def.uid), scaleRef.current, pixel);
       } else if ((mt = /^(.+) plays (.+)\.$/.exec(text))) {
         const card = findCardByName(mt[2]);
         if (card && (actor !== myIdx || card.type === "spell")) newReveals.push({ id: Date.now() + Math.random(), card, enemy: actor !== myIdx });
@@ -2249,18 +2820,26 @@ function DeluxeGame({ g }) {
     if (newReveals.length) setReveals((q) => [...q, ...newReveals].slice(-4));
   }, [state]);
 
+  // Old blood eventually fades (the CSS handles the fade; this just clears it away afterwards).
   useEffect(() => {
-    if (!reveals.length) return;
+    const t = setInterval(() => setDecals((d) => { const now = Date.now(); const keep = d.filter((x) => now - x.born < (x.life + 7) * 1000); return keep.length === d.length ? d : keep; }), 4000);
+    return () => clearInterval(t);
+  }, []);
+
+  useEffect(() => {
+    if (!reveals.length) return undefined;
     const t = setTimeout(() => setReveals((q) => q.slice(1)), 1380);
     return () => clearTimeout(t);
   }, [reveals.length ? reveals[0].id : null]);
 
   useEffect(() => {
-    if (state.winner !== null) return;
+    if (state.winner !== null) return undefined;
     setBanner({ id: Date.now(), mine: state.turn === myIdx });
     const t = setTimeout(() => setBanner(null), 1500);
     return () => clearTimeout(t);
   }, [state.turn, state.turnNumber]);
+
+  useEffect(() => { setFocusIdx(null); }, [me.hand.length, state.turn]);
 
   // While the table is up, stop the page behind it from scrolling or rubber-banding on phones.
   useEffect(() => {
@@ -2269,11 +2848,6 @@ function DeluxeGame({ g }) {
     b.overflow = "hidden"; b.overscrollBehavior = "none"; b.background = "#0b0b0c";
     return () => { b.overflow = old.overflow; b.overscrollBehavior = old.overscrollBehavior; b.background = old.background; };
   }, []);
-
-  const cycleBoard = () => {
-    const i = BOARD_STYLES.findIndex((b) => b.id === display.board);
-    display.setDisplay({ board: BOARD_STYLES[(i + 1) % BOARD_STYLES.length].id });
-  };
 
   /* ----- shared pieces ----- */
   const enemyMinionTargetable = !!attacker || (pending && ["enemyMinion", "any", "enemyAny", "anyMinion"].includes(pending.needsTarget));
@@ -2285,18 +2859,20 @@ function DeluxeGame({ g }) {
     const gapX = portrait ? 12 : 18, gapY = 34;
     const fit = dxFit(n, laneW - 20, laneH - 40, maxRows, gapX, gapY, portrait ? 1.28 : 1.2);
     const w = DX_MIN_W * fit.s;
+    const side = isEnemy ? "opp" : "me";
     return (
-      <div style={{ width: laneW, height: laneH, display: "flex", alignItems: "center", justifyContent: "center" }}>
-        <div style={{ display: "flex", flexWrap: "wrap", justifyContent: "center", alignContent: "center", columnGap: gapX, rowGap: gapY, width: fit.cols * w + (fit.cols - 1) * gapX + 2, paddingTop: 12 }}>
+      <div data-dx-lane={side} style={{ position: "relative", width: laneW, height: laneH, display: "flex", alignItems: "center", justifyContent: "center" }}>
+        <div className="dx-decals">{decals.filter((d) => d.lane === side).map((d) => <DxDecal key={d.id} decal={d} pixel={pixel} />)}</div>
+        <div style={{ position: "relative", zIndex: 3, display: "flex", flexWrap: "wrap", justifyContent: "center", alignContent: "center", columnGap: gapX, rowGap: gapY, width: fit.cols * w + (fit.cols - 1) * gapX + 2, paddingTop: 12 }}>
           {board.map((m) => (
             <DeluxeMinion
-              key={m.uid} m={m} scale={fit.s} isEnemy={isEnemy} myTurn={myTurn} side={isEnemy ? "opp" : "me"}
+              key={m.uid} m={m} scale={fit.s} isEnemy={isEnemy} myTurn={myTurn} side={side}
               selected={!isEnemy && attacker === m.uid}
               targetable={!m.__dying && (isEnemy ? enemyMinionTargetable : myMinionTargetable)}
               onClick={m.__dying ? undefined : () => g.handleMinionClick(m, isEnemy, isEnemy ? oppIdx : myIdx)}
             />
           ))}
-          {board.length === 0 && <div className="dx-display" style={{ fontSize: 15 * u, color: "rgba(255,255,255,0.22)", letterSpacing: "0.2em" }}>{isEnemy ? "Enemy side" : "Your side"}</div>}
+          {board.length === 0 && <div className="dx-display" style={{ fontSize: T(15), color: "rgba(255,255,255,0.22)", letterSpacing: "0.2em" }}>{isEnemy ? "Enemy side" : "Your side"}</div>}
         </div>
       </div>
     );
@@ -2312,8 +2888,8 @@ function DeluxeGame({ g }) {
       onClick={() => onAction({ type: "endTurn" })}
       style={{ display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", lineHeight: 1.1, ...style }}
     >
-      <span style={{ fontSize: 26 * u }}>{myTurn ? "End Turn" : "Enemy Turn"}</span>
-      {timerText && <span style={{ fontSize: 17 * u, marginTop: 3 * u, color: g.turnElapsed >= 60000 ? "#8a0f00" : "#4a2400" }}>{timerText}</span>}
+      <span style={{ fontSize: (pixel ? 22 : 26) * u }}>{myTurn ? "End Turn" : "Enemy Turn"}</span>
+      {timerText && <span style={{ fontSize: T(17), marginTop: 3 * u, color: g.turnElapsed >= 60000 ? "#8a0f00" : "#4a2400" }}>{timerText}</span>}
     </button>
   );
 
@@ -2324,7 +2900,7 @@ function DeluxeGame({ g }) {
       <span className="dx-badge dx-badge-cost" style={{ position: "relative", width: 44 * u, height: 44 * u, fontSize: 24 * u, flexShrink: 0 }}>{pw.cost}</span>
       <span style={{ minWidth: 0, flex: 1 }}>
         <span style={{ display: "block", fontSize: (pw.name.length > 7 ? 16 : 19) * u, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{pw.name}{me.powerUsed ? " ✓" : ""}</span>
-        <span style={{ display: "block", fontFamily: DX_FONT, textTransform: "none", letterSpacing: 0, fontWeight: 500, fontSize: 12.5 * u, lineHeight: 1.15, color: "#d8d2c4", marginTop: 2 * u }}>{pw.desc}</span>
+        <span style={{ display: "block", fontFamily: DX_FONT, textTransform: "none", letterSpacing: 0, fontWeight: 500, fontSize: (pixel ? 12 : 12.5) * u, lineHeight: 1.15, color: "#d8d2c4", marginTop: 2 * u, textShadow: "none" }}>{pw.desc}</span>
       </span>
     </button>
   );
@@ -2332,31 +2908,31 @@ function DeluxeGame({ g }) {
   const logLines = (state.log || []).map((l) => (typeof l === "string" ? { text: l, warn: false } : l));
   const menuPanel = menuOpen && (
     <div className="dx-panel dx-pop" style={{ position: "absolute", right: 14, top: portrait ? 132 : 66, zIndex: 150, padding: 12 * u, display: "flex", flexDirection: "column", gap: 10 * u, minWidth: 210 * u }}>
-      {!g.isCpuMatch && <button className="dx-btn" style={{ fontSize: 17 * u }} onClick={() => { setMenuOpen(false); g.onSync(); }} title="Force-refresh the game state">Sync</button>}
-      <button className="dx-btn" style={{ fontSize: 17 * u }} onClick={() => { setMenuOpen(false); setLogOpen(true); }}>Battle log</button>
-      <button className="dx-btn" style={{ fontSize: 17 * u }} onClick={cycleBoard}>Board: {boardDef.name}</button>
-      <button className="dx-btn dx-btn-danger" style={{ fontSize: 17 * u }} onClick={() => { setMenuOpen(false); g.setConfirmConcede(true); }}>Concede</button>
-      <button className="dx-btn" style={{ fontSize: 15 * u }} onClick={() => setMenuOpen(false)}>Close</button>
+      {!g.isCpuMatch && <button className="dx-btn" style={{ fontSize: T(17) }} onClick={() => { setMenuOpen(false); g.onSync(); }} title="Force-refresh the game state">Sync</button>}
+      <button className="dx-btn" style={{ fontSize: T(17) }} onClick={() => { setMenuOpen(false); setLogOpen(true); }}>Battle log</button>
+      <button className="dx-btn dx-btn-danger" style={{ fontSize: T(17) }} onClick={() => { setMenuOpen(false); g.setConfirmConcede(true); }}>Concede</button>
+      <button className="dx-btn" style={{ fontSize: T(15) }} onClick={() => setMenuOpen(false)}>Close</button>
     </div>
   );
-  const menuBtn = (style) => <button className="dx-btn" style={{ fontSize: 17 * u, ...style }} onClick={() => setMenuOpen((v) => !v)}>☰ Menu</button>;
+  const menuBtn = (style) => <button className="dx-btn" style={{ fontSize: T(17), ...style }} onClick={() => setMenuOpen((v) => !v)}>☰ Menu</button>;
 
   const toasts = (
     <div style={{ display: "flex", flexDirection: "column", alignItems: "center", gap: 8, pointerEvents: "none" }}>
       {pending && (
-        <div className="dx-panel" style={{ padding: `${8 * u}px ${16 * u}px`, fontSize: 18 * u, display: "flex", alignItems: "center", gap: 14 * u, pointerEvents: "auto", borderColor: "#ff5a48" }}>
+        <div className="dx-panel" style={{ padding: `${8 * u}px ${16 * u}px`, fontSize: T(18), display: "flex", alignItems: "center", gap: 14 * u, pointerEvents: "auto", borderColor: "#ff5a48" }}>
           <span className="dx-display" style={{ fontWeight: 800, color: "#ffb0a6" }}>Choose a target</span>
-          <button className="dx-btn" style={{ fontSize: 15 * u }} onClick={g.cancelPending}>Cancel</button>
+          <button className="dx-btn" style={{ fontSize: T(15) }} onClick={g.cancelPending}>Cancel</button>
         </div>
       )}
-      {attacker && !pending && <div className="dx-panel" style={{ padding: `${6 * u}px ${14 * u}px`, fontSize: 15 * u, color: "#ffe27a" }}>Now tap an enemy to attack — or tap your minion again to cancel.</div>}
-      {g.notice && <div className="dx-panel dx-pop" style={{ padding: `${8 * u}px ${16 * u}px`, fontSize: 16 * u, color: "#ffd0c9", borderColor: "#b72a20" }}>{g.notice}</div>}
-      {g.actionError && <div className="dx-panel" style={{ padding: `${8 * u}px ${16 * u}px`, fontSize: 16 * u, color: "#ffd0c9", borderColor: "#b72a20" }}>{g.actionError}</div>}
-      {g.showOpponentIdleNote && <div className="dx-panel" style={{ padding: `${6 * u}px ${14 * u}px`, fontSize: 14 * u, color: "#ffb0a6" }}>Opponent has been idle a while — waiting for them to respond or time out...</div>}
+      {attacker && !pending && <div className="dx-panel" style={{ padding: `${6 * u}px ${14 * u}px`, fontSize: T(15), color: "#ffe27a" }}>Now tap an enemy to attack — or tap your minion again to cancel.</div>}
+      {g.notice && <div className="dx-panel dx-pop" style={{ padding: `${8 * u}px ${16 * u}px`, fontSize: T(16), color: "#ffd0c9", borderColor: "#b72a20" }}>{g.notice}</div>}
+      {g.actionError && <div className="dx-panel" style={{ padding: `${8 * u}px ${16 * u}px`, fontSize: T(16), color: "#ffd0c9", borderColor: "#b72a20" }}>{g.actionError}</div>}
+      {g.showOpponentIdleNote && <div className="dx-panel" style={{ padding: `${6 * u}px ${14 * u}px`, fontSize: T(14), color: "#ffb0a6" }}>Opponent has been idle a while — waiting for them to respond or time out...</div>}
     </div>
   );
 
-  const hand = (availW, hs, bottom, fan) => {
+  // opts: { fan, focusFirst, vars } - `focusFirst` = a touch must bring a card to the front before it can be played
+  const hand = (availW, hs, opts) => {
     const n = me.hand.length;
     const cw = DX_CARD_W * hs;
     const step = n > 1 ? Math.min(cw + 10, (availW - cw) / (n - 1)) : 0;
@@ -2368,9 +2944,11 @@ function DeluxeGame({ g }) {
       const off = i - (n - 1) / 2;
       return (
         <DxHandCard
-          key={i} card={c} scale={hs} disabled={disabled} playable={!disabled && state.winner === null} inspectOnly={!myTurn || c.cost > me.mana}
-          onClick={() => g.handleCardClick(i)}
-          style={{ left: x0 + i * step, bottom, zIndex: 20 + i, "--rot": fan ? `${off * Math.min(3, 16 / Math.max(1, n))}deg` : "0deg", "--ty": fan ? `${off * off * 1.3}px` : "0px", "--lift": "-14px", "--hs": fan ? 1.32 : 1.12 }}
+          key={i} idx={i} card={c} scale={hs} disabled={disabled} playable={!disabled && state.winner === null} inspectOnly={!myTurn || c.cost > me.mana}
+          focusFirst={!!opts.focusFirst} focused={focusIdx === i}
+          onFocus={() => { setTouchMode(true); setHandUp(true); setFocusIdx(i); }}
+          onActivate={() => g.handleCardClick(i)}
+          style={{ left: x0 + i * step, zIndex: 20 + i, "--rot": opts.fan ? `${off * Math.min(3, 16 / Math.max(1, n))}deg` : "0deg", "--ty": opts.fan ? `${off * off * 1.3}px` : "0px", ...opts.vars }}
         />
       );
     });
@@ -2384,45 +2962,45 @@ function DeluxeGame({ g }) {
       {g.confirmingIdx !== null && me.hand[g.confirmingIdx] && (
         <DxModal z={160} onBackdrop={() => g.setConfirmingIdx(null)}>
           <div style={{ display: "flex", justifyContent: "center", marginBottom: 22 * u, padding: 12 }}><DeluxeCard card={findCard(me.hand[g.confirmingIdx])} scale={bigCardScale} tilt /></div>
-          <div className="dx-display" style={{ fontSize: 22 * u, fontWeight: 800, marginBottom: 16 * u }}>Play this card?</div>
+          <div className="dx-display" style={{ fontSize: T(22), fontWeight: 800, marginBottom: 16 * u }}>Play this card?</div>
           <div style={{ display: "flex", gap: 16 * u, justifyContent: "center" }}>
-            <button className="dx-btn dx-btn-go" style={{ fontSize: 22 * u, minWidth: 130 * u }} onClick={() => g.confirmPlayCard(g.confirmingIdx)}>Play</button>
-            <button className="dx-btn" style={{ fontSize: 22 * u, minWidth: 130 * u }} onClick={() => g.setConfirmingIdx(null)}>Cancel</button>
+            <button className="dx-btn dx-btn-go" style={{ fontSize: T(22), minWidth: 130 * u }} onClick={() => g.confirmPlayCard(g.confirmingIdx)}>Play</button>
+            <button className="dx-btn" style={{ fontSize: T(22), minWidth: 130 * u }} onClick={() => g.setConfirmingIdx(null)}>Cancel</button>
           </div>
         </DxModal>
       )}
       {logOpen && (
         <DxModal z={170} onBackdrop={() => setLogOpen(false)} maxWidth={Math.min(W - 40, 760)}>
-          <div className="dx-display" style={{ fontSize: 24 * u, fontWeight: 800, marginBottom: 12 * u }}>Battle log</div>
-          <div className="dx-scroll" style={{ textAlign: "left", fontSize: 15 * u, lineHeight: 1.45, maxHeight: H * 0.6, overflowY: "auto", minWidth: Math.min(W - 120, 520) }}>
+          <div className="dx-display" style={{ fontSize: T(24), fontWeight: 800, marginBottom: 12 * u }}>Battle log</div>
+          <div className="dx-scroll" style={{ textAlign: "left", fontSize: T(15), lineHeight: 1.45, maxHeight: H * 0.6, overflowY: "auto", minWidth: Math.min(W - 120, 520) }}>
             {logLines.map((l, i) => <div key={i} style={{ color: l.warn ? "#ff8d80" : "#e8e2d4", fontWeight: l.warn ? 700 : 400 }}>{l.text}</div>)}
           </div>
-          <button className="dx-btn" style={{ fontSize: 18 * u, marginTop: 16 * u }} onClick={() => setLogOpen(false)}>Close</button>
+          <button className="dx-btn" style={{ fontSize: T(18), marginTop: 16 * u }} onClick={() => setLogOpen(false)}>Close</button>
         </DxModal>
       )}
       {g.confirmConcede && (
         <DxModal z={180} onBackdrop={() => g.setConfirmConcede(false)}>
-          <div className="dx-display" style={{ fontSize: 24 * u, fontWeight: 800 }}>Concede this game?</div>
-          <div style={{ fontSize: 16 * u, color: "#c9c2b3", margin: `${8 * u}px 0 ${18 * u}px` }}>You will lose.</div>
+          <div className="dx-display" style={{ fontSize: T(24), fontWeight: 800 }}>Concede this game?</div>
+          <div style={{ fontSize: T(16), color: "#c9c2b3", margin: `${8 * u}px 0 ${18 * u}px` }}>You will lose.</div>
           <div style={{ display: "flex", gap: 16 * u, justifyContent: "center" }}>
-            <button className="dx-btn dx-btn-danger" style={{ fontSize: 20 * u }} onClick={() => { g.setConfirmConcede(false); g.onConcede(); }}>Yes, concede</button>
-            <button className="dx-btn" style={{ fontSize: 20 * u }} onClick={() => g.setConfirmConcede(false)}>No</button>
+            <button className="dx-btn dx-btn-danger" style={{ fontSize: T(20) }} onClick={() => { g.setConfirmConcede(false); g.onConcede(); }}>Yes, concede</button>
+            <button className="dx-btn" style={{ fontSize: T(20) }} onClick={() => g.setConfirmConcede(false)}>No</button>
           </div>
         </DxModal>
       )}
       {g.showIdleWarning && (
         <DxModal z={190}>
-          <div className="dx-display" style={{ fontSize: 26 * u, fontWeight: 800, color: "#ffb0a6" }}>Are you still there?</div>
-          <div style={{ fontSize: 17 * u, marginTop: 10 * u }}>Confirm within {Math.max(0, Math.ceil((120000 - g.turnElapsed) / 1000))}s or you'll lose the game.</div>
-          <div style={{ fontSize: 14 * u, marginTop: 6 * u, color: "#a8a295" }}>Confirming will end your current turn.</div>
-          <button className="dx-btn dx-btn-go" style={{ fontSize: 22 * u, marginTop: 18 * u }} onClick={() => onAction({ type: "endTurn" })}>I'm here</button>
+          <div className="dx-display" style={{ fontSize: T(26), fontWeight: 800, color: "#ffb0a6" }}>Are you still there?</div>
+          <div style={{ fontSize: T(17), marginTop: 10 * u }}>Confirm within {Math.max(0, Math.ceil((120000 - g.turnElapsed) / 1000))}s or you'll lose the game.</div>
+          <div style={{ fontSize: T(14), marginTop: 6 * u, color: "#a8a295" }}>Confirming will end your current turn.</div>
+          <button className="dx-btn dx-btn-go" style={{ fontSize: T(22), marginTop: 18 * u }} onClick={() => onAction({ type: "endTurn" })}>I'm here</button>
         </DxModal>
       )}
       {g.showMulligan && (
         <DxModal z={195}>
-          <div className="dx-display" style={{ fontSize: 30 * u, fontWeight: 800 }}>Mulligan</div>
-          <div style={{ fontSize: 16 * u, marginTop: 6 * u, color: "#d8d2c4" }}>Pick up to {g.MULLIGAN_MAX} cards to shuffle back into your deck and redraw. Tap a card to select it.</div>
-          <div className="dx-display" style={{ fontSize: 18 * u, marginTop: 6 * u, fontWeight: 800, color: "#ff8d80" }}>{Math.max(0, Math.ceil((15000 - g.mulliganElapsed) / 1000))}s to decide</div>
+          <div className="dx-display" style={{ fontSize: T(30), fontWeight: 800 }}>Mulligan</div>
+          <div style={{ fontSize: T(16), marginTop: 6 * u, color: "#d8d2c4" }}>Pick up to {g.MULLIGAN_MAX} cards to shuffle back into your deck and redraw. Tap a card to select it.</div>
+          <div className="dx-display" style={{ fontSize: T(18), marginTop: 6 * u, fontWeight: 800, color: "#ff8d80" }}>{Math.max(0, Math.ceil((15000 - g.mulliganElapsed) / 1000))}s to decide</div>
           <div style={{ display: "flex", gap: 16, justifyContent: "center", flexWrap: "wrap", marginTop: 20 * u, padding: 10 }}>
             {me.hand.map((cardId, i) => {
               const selected = g.mulliganSelected.includes(i);
@@ -2431,7 +3009,7 @@ function DeluxeGame({ g }) {
                 <div key={i} onClick={() => g.toggleMulliganCard(i)} style={{ position: "relative", cursor: capReached ? "default" : "pointer", opacity: capReached ? 0.5 : 1 }}>
                   <DeluxeCard card={findCard(cardId)} scale={rowCardScale(me.hand.length)} />
                   {selected && (
-                    <div style={{ position: "absolute", inset: 0, background: "rgba(200,40,25,0.45)", border: "5px solid #ff5a48", borderRadius: 16, display: "flex", alignItems: "center", justifyContent: "center" }}>
+                    <div style={{ position: "absolute", inset: 0, background: "rgba(200,40,25,0.45)", border: "5px solid #ff5a48", borderRadius: pixel ? 0 : 16, display: "flex", alignItems: "center", justifyContent: "center" }}>
                       <span style={{ fontSize: 80, fontWeight: 800, color: "#fff", textShadow: "0 0 8px #000" }}>↺</span>
                     </div>
                   )}
@@ -2439,13 +3017,13 @@ function DeluxeGame({ g }) {
               );
             })}
           </div>
-          <button className="dx-btn dx-btn-go" style={{ fontSize: 22 * u, marginTop: 20 * u }} onClick={g.confirmMulligan}>Confirm ({g.mulliganSelected.length} to shuffle)</button>
+          <button className="dx-btn dx-btn-go" style={{ fontSize: T(22), marginTop: 20 * u }} onClick={g.confirmMulligan}>Confirm ({g.mulliganSelected.length} to shuffle)</button>
         </DxModal>
       )}
       {state.pendingDiscover && state.pendingDiscover.playerIdx === myIdx && (
         <DxModal z={196}>
-          <div className="dx-display" style={{ fontSize: 30 * u, fontWeight: 800 }}>Choose a card</div>
-          <div style={{ fontSize: 16 * u, marginTop: 6 * u, color: "#d8d2c4" }}>Pick one to add to your hand.</div>
+          <div className="dx-display" style={{ fontSize: T(30), fontWeight: 800 }}>Choose a card</div>
+          <div style={{ fontSize: T(16), marginTop: 6 * u, color: "#d8d2c4" }}>Pick one to add to your hand.</div>
           <div style={{ display: "flex", gap: 16, justifyContent: "center", flexWrap: "wrap", marginTop: 20 * u, padding: 10 }}>
             {state.pendingDiscover.options.map((cardId, i) => (
               <div key={i} onClick={() => g.setDiscoverSelected(cardId)} style={{ cursor: "pointer" }}>
@@ -2453,24 +3031,26 @@ function DeluxeGame({ g }) {
               </div>
             ))}
           </div>
-          <button className="dx-btn dx-btn-go" style={{ fontSize: 22 * u, marginTop: 20 * u }} disabled={g.discoverSelected === null} onClick={() => onAction({ type: "discoverChoice", cardId: g.discoverSelected })}>Confirm</button>
+          <button className="dx-btn dx-btn-go" style={{ fontSize: T(22), marginTop: 20 * u }} disabled={g.discoverSelected === null} onClick={() => onAction({ type: "discoverChoice", cardId: g.discoverSelected })}>Confirm</button>
         </DxModal>
       )}
       {state.winner !== null && (() => {
         const iWon = state.winner === myIdx;
         const losingHero = state.players[state.winner === 0 ? 1 : 0].hero;
         const gif = HERO_LOSE_GIF_OVERRIDES[losingHero];
-        const box = Math.min(portrait ? 440 : 320, W - 160);
+        const box = Math.min(portrait ? 420 : 300, W - 160);
+        const accent = iWon ? "#e0a94a" : "#b8402f";
         return (
-          <DxModal z={210}>
-            <div className="dx-display dx-title3d" style={{ fontSize: 68 * u, fontWeight: 900, lineHeight: 1, color: iWon ? "#ffd75e" : "#ff6a5a", textShadow: iWon ? "0 2px 0 #a14c06,0 4px 0 #7a3a04,0 6px 0 #4a2302,0 12px 22px rgba(0,0,0,0.8)" : "0 2px 0 #7a140c,0 4px 0 #570d07,0 6px 0 #330603,0 12px 22px rgba(0,0,0,0.8)" }}>{iWon ? "Victory" : "Defeat"}</div>
-            <div style={{ fontSize: 16 * u, color: "#c9c2b3", marginTop: 10 * u }}>{losingHero} falls in the wasteland.</div>
-            <div style={{ width: box, height: box, margin: `${18 * u}px auto 0`, borderRadius: 14, padding: 6, background: (iWon ? DX_RARITY.unique : DX_RARITY.common).frame, boxShadow: "0 10px 24px rgba(0,0,0,0.7)" }}>
-              <div style={{ width: "100%", height: "100%", borderRadius: 9, overflow: "hidden", background: "#111", display: "flex", alignItems: "center", justifyContent: "center" }}>
-                {gif ? (gif.startsWith("data:video") ? <video src={gif} autoPlay loop muted playsInline style={{ width: "100%", height: "100%", objectFit: "cover" }} /> : <img src={gif} alt={`${losingHero} defeated`} style={{ width: "100%", height: "100%", objectFit: "cover" }} />) : <span style={{ fontSize: 14 * u, color: "#888" }}>{losingHero} defeated</span>}
+          <DxModal z={210} plain>
+            <div className="dx-endtitle" style={{ fontSize: pixel ? (portrait ? 64 : 72) : (portrait ? 66 : 62), color: pixel ? accent : "#f3ecdf" }}>{iWon ? "Victory" : "Defeat"}</div>
+            <div className="dx-endrule" style={{ background: accent, marginTop: 20 * u }} />
+            <div style={{ fontFamily: pixel ? undefined : DX_THIN_FONT, fontWeight: 300, fontSize: T(14), letterSpacing: "0.22em", textTransform: "uppercase", color: "#a59c8c", marginTop: 16 * u }}>{losingHero} falls in the wasteland</div>
+            <div style={{ width: box, height: box, margin: `${26 * u}px auto 0`, border: `1px solid ${accent}`, padding: 6, background: "rgba(0,0,0,0.5)" }}>
+              <div style={{ width: "100%", height: "100%", overflow: "hidden", background: "#0c0c0c", display: "flex", alignItems: "center", justifyContent: "center" }}>
+                {gif ? (gif.startsWith("data:video") ? <video src={gif} autoPlay loop muted playsInline style={{ width: "100%", height: "100%", objectFit: "cover" }} /> : <img src={gif} alt={`${losingHero} defeated`} style={{ width: "100%", height: "100%", objectFit: "cover" }} />) : <span style={{ fontSize: T(14), color: "#888" }}>{losingHero} defeated</span>}
               </div>
             </div>
-            <button className="dx-btn dx-btn-go" style={{ fontSize: 22 * u, marginTop: 22 * u }} onClick={g.onBackToMenu}>Back to Menu</button>
+            <button className="dx-btn" style={{ fontSize: T(18), marginTop: 28 * u }} onClick={g.onBackToMenu}>Back to Menu</button>
           </DxModal>
         );
       })()}
@@ -2481,14 +3061,14 @@ function DeluxeGame({ g }) {
     <>
       {banner && state.winner === null && (
         <div key={banner.id} style={{ position: "absolute", left: 0, right: 0, top: "42%", display: "flex", justifyContent: "center", pointerEvents: "none", zIndex: 120, overflow: "hidden" }}>
-          <div className="dx-banner dx-display" style={{ padding: `${10 * u}px ${(portrait ? 40 : 70) * u}px`, fontSize: portrait ? 64 : 54, whiteSpace: "nowrap", fontWeight: 900, color: banner.mine ? "#2a1300" : "#fff", background: banner.mine ? "linear-gradient(180deg,#ffe27a,#e88f1c)" : "linear-gradient(180deg,#d9453a,#7a140c)", border: "4px solid #0b0b0b", boxShadow: "0 10px 30px rgba(0,0,0,0.7)" }}>
+          <div className="dx-banner dx-display" style={{ padding: `${10 * u}px ${(portrait ? 40 : 70) * u}px`, fontSize: pixel ? 48 : (portrait ? 64 : 54), whiteSpace: "nowrap", fontWeight: 900, color: banner.mine ? "#2a1300" : "#fff", background: pixel ? (banner.mine ? "#e0a020" : "#b02a1c") : (banner.mine ? "linear-gradient(180deg,#ffe27a,#e88f1c)" : "linear-gradient(180deg,#d9453a,#7a140c)"), border: "4px solid #0b0b0b", boxShadow: pixel ? "8px 8px 0 rgba(0,0,0,0.6)" : "0 10px 30px rgba(0,0,0,0.7)" }}>
             <span style={{ display: "inline-block", transform: "skewX(14deg)" }}>{banner.mine ? "Your turn" : "Enemy turn"}</span>
           </div>
         </div>
       )}
       {reveals.length > 0 && (
         <div style={{ position: "absolute", inset: 0, display: "flex", alignItems: "center", justifyContent: "center", pointerEvents: "none", zIndex: 130 }}>
-          <div key={reveals[0].id} className="dx-reveal" style={{ "--from": reveals[0].enemy ? "-300px" : "300px", filter: `drop-shadow(0 0 30px ${(DX_RARITY[reveals[0].card.rarity] || DX_RARITY.common).glow})` }}>
+          <div key={reveals[0].id} className="dx-reveal" style={{ "--from": reveals[0].enemy ? "-300px" : "300px", filter: pixel ? undefined : `drop-shadow(0 0 30px ${(DX_RARITY[reveals[0].card.rarity] || DX_RARITY.common).glow})` }}>
             <DeluxeCard card={reveals[0].card} scale={portrait ? 1.5 : 1.25} />
           </div>
         </div>
@@ -2496,65 +3076,86 @@ function DeluxeGame({ g }) {
     </>
   );
 
-  const matFrame = { borderRadius: 22, background: "rgba(0,0,0,0.22)", border: `3px solid rgba(0,0,0,0.6)`, boxShadow: `inset 0 0 0 2px ${boardDef.accent}55, inset 0 0 60px rgba(0,0,0,0.55), 0 12px 30px rgba(0,0,0,0.5)` };
+  const matVars = { "--accent-soft": boardDef.accent + "55" };
   const divider = (h) => (
-    <div style={{ height: h, display: "flex", alignItems: "center", gap: 14, padding: "0 26px" }}>
-      <div style={{ flex: 1, height: 3, background: `linear-gradient(90deg,transparent,${boardDef.accent}aa)` }} />
-      <svg viewBox="-12 -12 24 24" width={h * 0.8} height={h * 0.8} style={{ opacity: 0.85 }}>
-        <circle r="11" fill={boardDef.accent} stroke="#111" strokeWidth="1" /><circle r="2" fill="#111" />
-        {[0, 120, 240].map((a) => <path key={a} transform={`rotate(${a})`} d="M-1.9 -3.3A3.8 3.8 0 0 1 1.9 -3.3L4.7 -8.2A9.5 9.5 0 0 0 -4.7 -8.2Z" fill="#111" />)}
-      </svg>
-      <div style={{ flex: 1, height: 3, background: `linear-gradient(270deg,transparent,${boardDef.accent}aa)` }} />
+    <div style={{ height: h, display: "flex", alignItems: "center", gap: 14, padding: "0 26px", position: "relative", zIndex: 3 }}>
+      <div style={{ flex: 1, height: pixel ? 4 : 3, background: pixel ? boardDef.accent + "88" : `linear-gradient(90deg,transparent,${boardDef.accent}aa)` }} />
+      <div style={{ opacity: 0.85 }}><DxTrefoil size={h * 0.8} color={boardDef.accent} dark="#111" /></div>
+      <div style={{ flex: 1, height: pixel ? 4 : 3, background: pixel ? boardDef.accent + "88" : `linear-gradient(270deg,transparent,${boardDef.accent}aa)` }} />
     </div>
   );
 
   let body;
   if (!portrait) {
-    /* ================= landscape (desktop 16:9 / 16:10, tablets) ================= */
-    const pad = 16, colL = 272, colR = 182, handH = 268;
-    const matX = pad + colL + pad, matW = W - matX - colR - pad * 2;
-    const matY = 14, matH = H - handH - matY - 8;
-    const divH = 34, laneH = (matH - divH) / 2;
-    const plateH = 158, powerH = 84;
-    const hs = 0.74;
+    /* ================= landscape (desktop 16:9 / 16:10, tablets, phones on their side) ================= */
+    const pad = 14, colL = 230, colR = 186;
+    const plateW = 440, plateH = 112;
+    const hs = 0.74, cardH = DX_CARD_H * hs, peekH = 150;
+    const matX = pad + colL + 12, matW = W - matX - colR - pad - 12;
+    const matY = pad + plateH + 10;
+    const myPlateY = H - peekH - plateH - 8;
+    const matH = myPlateY - 10 - matY;
+    const divH = 30, laneH = (matH - divH) / 2;
+    const plateX = (W - plateW) / 2;
+    const trayW = Math.min(W - pad * 2, 1180);
+    // A touch can't hover, so a focused card is shown much bigger there than a hovered one needs to be.
+    const focusScale = touchMode ? Math.min(2.0, (H - 40) / cardH) : 1.34;
     body = (
       <>
-        {/* left column: both heroes, the log, the hero power */}
-        <div style={{ position: "absolute", left: pad, top: matY, width: colL, height: plateH }}>
-          <DxHeroPlate player={opp} side="opp" u={1} targetable={oppHeroTargetable} attackable={g.canAttackEnemyHero} onClick={() => g.handleHeroClick(true, oppIdx)} />
+        {/* enemy hero, top centre */}
+        <div style={{ position: "absolute", left: plateX, top: pad, width: plateW, height: plateH, zIndex: 6 }}>
+          <DxHeroPlate player={opp} side="opp" u={1} wide pixel={pixel} targetable={oppHeroTargetable} attackable={g.canAttackEnemyHero} onClick={() => g.handleHeroClick(true, oppIdx)} />
         </div>
-        <div style={{ position: "absolute", left: pad, top: matY + plateH + 12, width: colL, display: "flex", height: 70, alignItems: "center", paddingLeft: 6 }}>
-          {Array.from({ length: opp.hand.length }).map((_, i) => <div key={i} style={{ marginLeft: i ? -Math.max(14, Math.min(26, (opp.hand.length - 4) * 4 + 14)) : 0 }}><DeluxeCardBack w={44} /></div>)}
+        <div style={{ position: "absolute", left: plateX + plateW + 16, top: pad + 22, display: "flex", height: 70, alignItems: "center" }}>
+          {Array.from({ length: opp.hand.length }).map((_, i) => <div key={i} style={{ marginLeft: i ? -Math.max(12, Math.min(26, (opp.hand.length - 4) * 4 + 12)) : 0 }}><DeluxeCardBack w={44} /></div>)}
         </div>
-        <div className="dx-panel dx-scroll" ref={g.logRef} style={{ position: "absolute", left: pad, top: matY + plateH + 94, width: colL, bottom: plateH + powerH + 14 + 24, padding: "8px 10px", overflowY: "auto", fontSize: 12.5, lineHeight: 1.4 }}>
-          {logLines.slice(-14).map((l, i) => <div key={i} style={{ color: l.warn ? "#ff8d80" : "#d8d2c4", fontWeight: l.warn ? 700 : 400 }}>{l.text}</div>)}
-        </div>
-        <div style={{ position: "absolute", left: pad, bottom: plateH + 14 + 12, width: colL, height: powerH }}>{powerBtn({ width: "100%", height: "100%" })}</div>
-        <div style={{ position: "absolute", left: pad, bottom: 14, width: colL, height: plateH }}>
-          <DxHeroPlate player={me} side="me" u={1} targetable={pending && pending.needsTarget === "any"} onClick={() => g.handleHeroClick(false, myIdx)} />
+        <div style={{ position: "absolute", right: pad, top: pad, width: colR }}>{menuBtn({ width: "100%" })}</div>
+
+        {/* battle log, left */}
+        <div className="dx-panel dx-scroll" ref={g.logRef} style={{ position: "absolute", left: pad, top: matY, width: colL, height: matH, padding: "8px 10px", overflowY: "auto", fontSize: T(12.5), lineHeight: 1.4 }}>
+          {logLines.slice(-18).map((l, i) => <div key={i} style={{ color: l.warn ? "#ff8d80" : "#d8d2c4", fontWeight: l.warn ? 700 : 400, marginBottom: pixel ? 4 : 0 }}>{l.text}</div>)}
         </div>
 
         {/* the table */}
-        <div className="dx-mat3d" style={{ position: "absolute", left: matX, top: matY, width: matW, height: matH, ...matFrame }}>
+        <div className="dx-mat dx-mat3d" style={{ position: "absolute", left: matX, top: matY, width: matW, height: matH, ...matVars }}>
           {renderLane(g.oppBoardWithGhosts, true, matW, laneH, 1)}
           {divider(divH)}
           {renderLane(g.meBoardWithGhosts, false, matW, laneH, 1)}
         </div>
-        <div style={{ position: "absolute", left: matX, width: matW, top: matY + 18, zIndex: 110, pointerEvents: "none" }}>{toasts}</div>
+        <div style={{ position: "absolute", left: matX, width: matW, top: matY + 16, zIndex: 110, pointerEvents: "none" }}>{toasts}</div>
 
-        {/* right column: menu, end turn */}
-        <div style={{ position: "absolute", right: pad, top: matY, width: colR }}>{menuBtn({ width: "100%" })}</div>
+        {/* end turn, right */}
         <div style={{ position: "absolute", right: pad, top: matY + matH / 2 - 60, width: colR, height: 120 }}>{endTurnBtn({ width: "100%", height: "100%" })}</div>
-        <div style={{ position: "absolute", right: pad, bottom: 20, width: colR, display: "flex", flexDirection: "column", alignItems: "center", gap: 6 }}>
-          <div style={{ position: "relative", width: 76, height: 104 }}>
-            {[2, 1, 0].map((k) => <div key={k} style={{ position: "absolute", left: k * 3, top: -k * 3 }}>{me.deck.length > k * 8 && <DeluxeCardBack w={70} />}</div>)}
-          </div>
-          <div className="dx-display" style={{ fontSize: 15, fontWeight: 800, color: "#e8e2d4", textShadow: "0 1px 3px #000" }}>Your deck: {me.deck.length}</div>
-        </div>
 
-        {/* hand */}
-        <div style={{ position: "absolute", left: matX, width: matW, bottom: 0, height: handH, zIndex: 90, pointerEvents: "none" }}>
-          <div style={{ position: "relative", width: matW - 70, margin: "0 auto", height: "100%", pointerEvents: "auto" }}>{hand(matW - 70, hs, 20, true)}</div>
+        {/* your hero, bottom centre, with the deck on its left and the hero power on its right */}
+        <div style={{ position: "absolute", left: plateX - 118, top: myPlateY + 2, width: 100, display: "flex", flexDirection: "column", alignItems: "center", gap: 4 }}>
+          <div style={{ position: "relative", width: 62, height: 84 }}>
+            {[2, 1, 0].map((k) => <div key={k} style={{ position: "absolute", left: k * 3, top: -k * 3 }}>{me.deck.length > k * 8 && <DeluxeCardBack w={56} />}</div>)}
+          </div>
+          <div className="dx-display" style={{ fontSize: T(13), fontWeight: 800, color: "#e8e2d4", textShadow: "0 1px 3px #000", whiteSpace: "nowrap" }}>Deck {me.deck.length}</div>
+        </div>
+        <div style={{ position: "absolute", left: plateX, top: myPlateY, width: plateW, height: plateH, zIndex: 6 }}>
+          <DxHeroPlate player={me} side="me" u={1} wide pixel={pixel} targetable={pending && pending.needsTarget === "any"} onClick={() => g.handleHeroClick(false, myIdx)} />
+        </div>
+        <div style={{ position: "absolute", left: plateX + plateW + 14, top: myPlateY + 14, width: 252, height: 84, zIndex: 6 }}>{powerBtn({ width: "100%", height: "100%" })}</div>
+
+        {/* hand: tucked under the bottom edge; rises on hover (mouse) or tap (touch) */}
+        <div
+          className={"dx-tray dx-hand-hover" + (handUp ? " dx-hand-up" : "")}
+          style={{ position: "absolute", left: (W - trayW) / 2, width: trayW, bottom: 0, height: handUp ? cardH + 46 : peekH, zIndex: 90 }}
+          onPointerEnter={(e) => { if (e.pointerType === "mouse") { setTouchMode(false); setHandUp(true); } }}
+          onPointerLeave={(e) => { if (e.pointerType === "mouse") { setHandUp(false); setFocusIdx(null); } }}
+          onTouchMove={(e) => {
+            const t = e.touches && e.touches[0];
+            if (!t) return;
+            const el = document.elementFromPoint(t.clientX, t.clientY);
+            const cardEl = el && el.closest ? el.closest("[data-dx-hand]") : null;
+            if (cardEl) { const i = Number(cardEl.getAttribute("data-dx-hand")); setTouchMode(true); setHandUp(true); setFocusIdx(i); }
+          }}
+        >
+          <div style={{ position: "relative", width: trayW - 60, margin: "0 auto", height: "100%" }}>
+            {hand(trayW - 60, hs, { fan: !pixel, focusFirst: true, vars: { "--rest": `${-(cardH - peekH)}px`, "--up": "16px", "--lift": "-6px", "--hs": focusScale } })}
+          </div>
         </div>
       </>
     );
@@ -2568,40 +3169,47 @@ function DeluxeGame({ g }) {
     body = (
       <div style={{ position: "absolute", inset: 0, padding: pad, display: "flex", flexDirection: "column", gap }}>
         <div style={{ height: barH, flexShrink: 0 }}>
-          <DxHeroPlate player={opp} side="opp" u={1.3} portraitSize={82} wide targetable={oppHeroTargetable} attackable={g.canAttackEnemyHero} onClick={() => g.handleHeroClick(true, oppIdx)}>
+          <DxHeroPlate player={opp} side="opp" u={1.3} portraitSize={82} wide pixel={pixel} targetable={oppHeroTargetable} attackable={g.canAttackEnemyHero} onClick={() => g.handleHeroClick(true, oppIdx)}>
             <div style={{ display: "flex", flexDirection: "column", alignItems: "flex-end", gap: 8, flexShrink: 0 }} onClick={(e) => e.stopPropagation()}>
               {menuBtn({ fontSize: 22 })}
               <div style={{ display: "flex", alignItems: "center", gap: 6, fontSize: 20, fontWeight: 700 }}><DeluxeCardBack w={30} />× {opp.hand.length}</div>
             </div>
           </DxHeroPlate>
         </div>
-        <div style={{ ...matFrame, flexShrink: 0 }}>
+        <div className="dx-mat" style={{ flexShrink: 0, ...matVars }}>
           {renderLane(g.oppBoardWithGhosts, true, laneW, laneH, 2)}
         </div>
         <div style={{ height: stripH, flexShrink: 0, display: "flex", gap: 10, alignItems: "stretch" }}>
-          <button className="dx-panel" onClick={() => setLogOpen(true)} style={{ flex: 1, minWidth: 0, padding: "6px 14px", textAlign: "left", fontFamily: DX_FONT, fontSize: 19, lineHeight: 1.2, color: lastLog && lastLog.warn ? "#ff8d80" : "#d8d2c4", cursor: "pointer", overflow: "hidden", display: "flex", alignItems: "center" }}>
+          <button className="dx-panel" onClick={() => setLogOpen(true)} style={{ flex: 1, minWidth: 0, padding: "6px 14px", textAlign: "left", fontFamily: DX_FONT, fontSize: pixel ? 16 : 19, lineHeight: 1.2, color: lastLog && lastLog.warn ? "#ff8d80" : "#d8d2c4", cursor: "pointer", overflow: "hidden", display: "flex", alignItems: "center" }}>
             <span style={{ display: "-webkit-box", WebkitLineClamp: 2, WebkitBoxOrient: "vertical", overflow: "hidden" }}>{lastLog ? lastLog.text : "Battle log"}</span>
           </button>
           {endTurnBtn({ width: 250, flexShrink: 0 })}
         </div>
-        <div style={{ ...matFrame, flexShrink: 0 }}>
+        <div className="dx-mat" style={{ flexShrink: 0, ...matVars }}>
           {renderLane(g.meBoardWithGhosts, false, laneW, laneH, 2)}
         </div>
         <div style={{ height: barH, flexShrink: 0, display: "flex", gap: 10 }}>
           <div style={{ flex: 1, minWidth: 0 }}>
-            <DxHeroPlate player={me} side="me" u={1.3} portraitSize={82} targetable={pending && pending.needsTarget === "any"} onClick={() => g.handleHeroClick(false, myIdx)} />
+            <DxHeroPlate player={me} side="me" u={1.3} portraitSize={82} pixel={pixel} targetable={pending && pending.needsTarget === "any"} onClick={() => g.handleHeroClick(false, myIdx)} />
           </div>
           {powerBtn({ width: 268, flexShrink: 0 })}
         </div>
-        <div style={{ height: handH, flexShrink: 0, position: "relative", margin: "0 8px" }}>{hand(laneW - 16, hs, 16, false)}</div>
+        <div className="dx-hand-hover" style={{ height: handH, flexShrink: 0, position: "relative", margin: "0 8px" }}>{hand(laneW - 16, hs, { fan: false, focusFirst: false, vars: { "--rest": "16px", "--lift": "-14px", "--hs": 1.12 } })}</div>
         <div style={{ position: "absolute", left: pad, right: pad, top: pad + barH + gap + 10, zIndex: 110, pointerEvents: "none" }}>{toasts}</div>
       </div>
     );
   }
 
   return (
-    <div className="dx-root" ref={rootRef} style={{ position: "fixed", left: 0, top: 0, width: W, height: H, transform: `scale(${scale})`, transformOrigin: "0 0", overflow: "hidden", zIndex: 40 }}>
-      <DeluxeBackdrop styleId={display.board} />
+    <div
+      className={dxRootClass(display.mode)} ref={rootRef}
+      style={{ position: "fixed", left: 0, top: 0, width: W, height: H, transform: `scale(${scale})`, transformOrigin: "0 0", overflow: "hidden", zIndex: 40 }}
+      onPointerDown={(e) => {
+        // a tap anywhere outside the hand tucks it away again
+        if (e.pointerType !== "mouse" && !(e.target.closest && e.target.closest(".dx-tray"))) { setHandUp(false); setFocusIdx(null); }
+      }}
+    >
+      <DxBoardBackdrop styleId={boardId} />
       {body}
       {menuPanel}
       {overlays}
@@ -2610,10 +3218,11 @@ function DeluxeGame({ g }) {
   );
 }
 
-function DxHandCard({ card, scale, disabled, playable, inspectOnly, onClick, style }) {
+function DxHandCard({ idx, card, scale, disabled, playable, inspectOnly, focusFirst, focused, onFocus, onActivate, style }) {
   const [showDetail, setShowDetail] = useState(false);
   const pressTimer = useRef(null);
   const longPressFired = useRef(false);
+  const pointer = useRef("mouse");
   const startPress = () => {
     longPressFired.current = false;
     pressTimer.current = setTimeout(() => { longPressFired.current = true; setShowDetail(true); }, 550);
@@ -2622,8 +3231,14 @@ function DxHandCard({ card, scale, disabled, playable, inspectOnly, onClick, sty
   return (
     <>
       <div
-        className="dx-handcard" style={style}
-        onClick={(e) => { if (longPressFired.current) { longPressFired.current = false; e.stopPropagation(); return; } if (inspectOnly) { setShowDetail(true); return; } onClick(); }}
+        className={"dx-handcard" + (focused ? " dx-focus" : "")} style={style} data-dx-hand={idx}
+        onPointerDown={(e) => { pointer.current = e.pointerType || "mouse"; }}
+        onClick={(e) => {
+          if (longPressFired.current) { longPressFired.current = false; e.stopPropagation(); return; }
+          if (focusFirst && pointer.current !== "mouse" && !focused) { onFocus(); return; }
+          if (inspectOnly) { setShowDetail(true); return; }
+          onActivate();
+        }}
         onContextMenu={(e) => { e.preventDefault(); e.stopPropagation(); setShowDetail(true); }}
         onMouseDown={startPress} onMouseUp={cancelPress} onMouseLeave={cancelPress}
         onTouchStart={startPress} onTouchEnd={cancelPress} onTouchMove={cancelPress}
@@ -2632,6 +3247,757 @@ function DxHandCard({ card, scale, disabled, playable, inspectOnly, onClick, sty
       </div>
       {showDetail && <DeluxeCardDetail card={card} onClose={() => setShowDetail(false)} />}
     </>
+  );
+}
+
+/* =========================================================================
+   MENUS for Full Graphics and Pixel Art. Same screens, same data and the
+   same callbacks as the notepad menus further down - only redrawn: quiet,
+   dark and rusty for Full Graphics, chunky and amber for Pixel Art (the
+   second is the first with a different set of CSS variables).
+   ========================================================================= */
+const MENU_STYLE = `
+.fx-menu { --fx-panel: rgba(30,25,21,0.84); --fx-solid: #1c1815; --fx-line: #3d3027; --fx-soft: rgba(255,255,255,0.07); --fx-text: #e9dfce; --fx-muted: #9a8f7e; --fx-dim: #6d6458;
+  --fx-rust: #c4622d; --fx-ember: #e9944a; --fx-danger: #c5472f; --fx-ok: #9fc65c; --fx-gold: #e0b15a; --fx-radius: 3px;
+  --fx-font: ${DX_FONT}; --fx-display: ${DX_DISPLAY_FONT}; --fx-thin: ${DX_THIN_FONT};
+  position: relative; min-height: 100vh; color: var(--fx-text); font-family: var(--fx-font); font-size: 15px; line-height: 1.45; -webkit-tap-highlight-color: transparent; }
+.fx-menu *, .fx-menu *::before, .fx-menu *::after { box-sizing: border-box; }
+.fx-menu ::-webkit-scrollbar { width: 8px; height: 8px; } .fx-menu ::-webkit-scrollbar-thumb { background: var(--fx-line); }
+.fx-backdrop { position: fixed; inset: 0; z-index: 0; overflow: hidden;
+  background: radial-gradient(ellipse 90% 60% at 50% -10%, rgba(196,98,45,0.32), rgba(0,0,0,0) 60%), radial-gradient(ellipse 60% 40% at 88% 108%, rgba(196,98,45,0.18), rgba(0,0,0,0) 60%), linear-gradient(180deg,#1b1613,#0c0a09); }
+.fx-backdrop > div, .fx-backdrop > svg { position: absolute; inset: 0; }
+.fx-wrap { position: relative; z-index: 1; max-width: 1120px; margin: 0 auto; padding: 0 22px 64px; }
+.fx-top { display: flex; align-items: center; justify-content: space-between; gap: 16px; padding: 18px 0 14px; border-bottom: 1px solid var(--fx-line); flex-wrap: wrap; }
+.fx-brand { display: flex; align-items: center; gap: 12px; font-family: var(--fx-thin); font-weight: 200; letter-spacing: 0.42em; text-transform: uppercase; font-size: 22px; white-space: nowrap; margin: 0; }
+.fx-brand b { font-weight: 600; color: var(--fx-ember); }
+.fx-top-right { display: flex; align-items: center; gap: 8px 16px; font-size: 13px; color: var(--fx-muted); flex-wrap: wrap; justify-content: flex-end; }
+.fx-chip { display: inline-flex; align-items: center; gap: 7px; padding: 4px 10px; border: 1px solid var(--fx-line); border-radius: var(--fx-radius); background: rgba(0,0,0,0.3); color: var(--fx-gold); font-family: var(--fx-display); font-weight: 700; letter-spacing: 0.06em; white-space: nowrap; }
+.fx-live { display: inline-block; width: 7px; height: 7px; border-radius: 50%; background: var(--fx-ok); box-shadow: 0 0 8px var(--fx-ok); margin-right: 6px; animation: dxPulse 2.4s ease-in-out infinite; }
+.fx-link { background: none; border: none; padding: 0; font: inherit; color: var(--fx-muted); cursor: pointer; border-bottom: 1px solid transparent; transition: color 0.15s, border-color 0.15s; }
+.fx-link:hover { color: var(--fx-ember); border-color: var(--fx-ember); }
+.fx-nav { display: flex; gap: 4px 28px; flex-wrap: wrap; padding: 14px 0 0; }
+.fx-nav button { background: none; border: none; padding: 6px 0; cursor: pointer; font-family: var(--fx-display); font-stretch: condensed; text-transform: uppercase; letter-spacing: 0.2em; font-size: 13px; font-weight: 600; color: var(--fx-muted); position: relative; transition: color 0.15s; }
+.fx-nav button::after { content: ""; position: absolute; left: 0; right: 100%; bottom: 0; height: 2px; background: var(--fx-rust); transition: right 0.22s cubic-bezier(.2,.8,.2,1); }
+.fx-nav button:hover { color: var(--fx-text); } .fx-nav button:hover::after { right: 0; }
+.fx-h1 { font-family: var(--fx-thin); font-weight: 200; text-transform: uppercase; letter-spacing: 0.3em; font-size: 30px; margin: 28px 0 6px; line-height: 1.15; }
+.fx-sub { color: var(--fx-muted); font-size: 14px; margin: 0; }
+.fx-eyebrow { font-family: var(--fx-display); font-stretch: condensed; text-transform: uppercase; letter-spacing: 0.24em; font-size: 11.5px; font-weight: 700; color: var(--fx-rust); }
+.fx-panel { position: relative; background: var(--fx-panel); border: 1px solid var(--fx-line); border-radius: var(--fx-radius); padding: 18px; }
+.fx-panel::before { content: ""; position: absolute; left: -1px; top: -1px; width: 38%; height: 2px; background: linear-gradient(90deg,var(--fx-rust),rgba(0,0,0,0)); }
+.fx-btn { display: inline-flex; align-items: center; justify-content: center; gap: 8px; padding: 11px 22px; font-family: var(--fx-display); font-stretch: condensed; text-transform: uppercase; letter-spacing: 0.18em; font-size: 14px; font-weight: 700;
+  color: var(--fx-text); background: rgba(255,255,255,0.03); border: 1px solid var(--fx-line); border-radius: var(--fx-radius); cursor: pointer; white-space: nowrap; transition: background 0.15s, border-color 0.15s, color 0.15s, transform 0.08s; }
+.fx-btn:hover:not(:disabled) { border-color: var(--fx-ember); color: #fff; background: rgba(196,98,45,0.14); }
+.fx-btn:active:not(:disabled) { transform: translateY(1px); }
+.fx-btn:disabled { opacity: 0.38; cursor: default; }
+.fx-btn-primary { background: linear-gradient(180deg,#d2733a,#a8501f); border-color: #e79a5c; color: #1a0d05; box-shadow: 0 0 0 1px rgba(0,0,0,0.5), 0 8px 22px rgba(196,98,45,0.28); }
+.fx-btn-primary:hover:not(:disabled) { background: linear-gradient(180deg,#e58a4c,#b95a25); color: #120803; }
+.fx-btn-danger:hover:not(:disabled) { border-color: var(--fx-danger); background: rgba(197,71,47,0.16); }
+.fx-btn-sm { padding: 7px 14px; font-size: 12px; }
+.fx-notice { margin-top: 12px; padding: 10px 14px; border: 1px solid var(--fx-danger); background: rgba(197,71,47,0.14); color: #ffd3c8; font-size: 13px; text-align: center; border-radius: var(--fx-radius); }
+.fx-notice-ok { border-color: var(--fx-ok); background: rgba(159,198,92,0.12); color: #e4f5c8; }
+
+/* hero select */
+.fx-heroes { display: grid; grid-template-columns: repeat(6,1fr); gap: 12px; margin-top: 22px; }
+@media (max-width: 900px) { .fx-heroes { grid-template-columns: repeat(3,1fr); } }
+.fx-hero { position: relative; aspect-ratio: 3 / 4; border: 1px solid var(--fx-line); border-radius: var(--fx-radius); overflow: hidden; cursor: pointer; background: #0c0a09; padding: 0; text-align: left; color: inherit; font: inherit;
+  transition: transform 0.22s cubic-bezier(.2,.8,.2,1), border-color 0.2s, filter 0.25s, box-shadow 0.25s; animation: fxRise 0.55s cubic-bezier(.2,.8,.2,1) backwards; animation-delay: calc(var(--i) * 70ms); }
+.fx-hero-art { position: absolute; inset: 0; transition: transform 0.5s cubic-bezier(.2,.8,.2,1), filter 0.3s; filter: saturate(0.75) contrast(1.05); }
+.fx-hero::after { content: ""; position: absolute; inset: 0; background: linear-gradient(180deg,rgba(10,8,7,0.1) 30%,rgba(10,8,7,0.94) 100%); pointer-events: none; }
+.fx-hero-info { position: absolute; left: 0; right: 0; bottom: 0; padding: 12px; z-index: 2; }
+.fx-hero-name { font-family: var(--fx-display); font-stretch: condensed; text-transform: uppercase; letter-spacing: 0.14em; font-weight: 700; font-size: 17px; }
+.fx-hero-power { font-size: 11.5px; color: var(--fx-muted); margin-top: 2px; line-height: 1.3; }
+.fx-hero-bar { position: absolute; left: 0; top: 0; bottom: 0; width: 3px; background: var(--fc); z-index: 2; transform: scaleY(0); transform-origin: bottom; transition: transform 0.3s; }
+.fx-scan { position: absolute; left: 0; right: 0; top: -45%; height: 42%; z-index: 2; pointer-events: none; opacity: 0; background: linear-gradient(180deg,rgba(233,148,74,0),rgba(233,148,74,0.5),rgba(233,148,74,0)); }
+.fx-hero:hover { transform: translateY(-6px); border-color: var(--fx-ember); }
+.fx-hero:hover .fx-hero-art { transform: scale(1.07); filter: none; } .fx-hero:hover .fx-hero-bar { transform: scaleY(1); }
+.fx-heroes.has-pick .fx-hero:not(.is-picked) { filter: brightness(0.5) saturate(0.4); }
+.fx-heroes.has-pick .fx-hero:not(.is-picked):hover { filter: brightness(0.85) saturate(0.8); }
+.fx-hero.is-picked { transform: translateY(-10px); border-color: var(--fx-ember); box-shadow: 0 0 0 1px var(--fx-ember), 0 18px 40px rgba(196,98,45,0.35); }
+.fx-hero.is-picked .fx-hero-art { filter: none; transform: scale(1.05); } .fx-hero.is-picked .fx-hero-bar { transform: scaleY(1); }
+.fx-hero.is-picked .fx-scan { animation: fxScan 0.75s ease-out; }
+.fx-hero.is-locked .fx-hero-art { filter: grayscale(1) brightness(0.5); }
+.fx-tag { position: absolute; top: 8px; z-index: 3; font-family: var(--fx-display); font-size: 10px; font-weight: 700; letter-spacing: 0.16em; text-transform: uppercase; padding: 2px 6px; border-radius: 2px; }
+.fx-tag-lock { left: 8px; background: var(--fx-danger); color: #fff; } .fx-tag-custom { right: 8px; background: rgba(0,0,0,0.7); border: 1px solid var(--fx-ember); color: var(--fx-ember); }
+@keyframes fxRise { 0% { opacity: 0; transform: translateY(26px); filter: blur(6px); } 100% { opacity: 1; transform: none; filter: none; } }
+@keyframes fxScan { 0% { top: -45%; opacity: 1; } 100% { top: 110%; opacity: 0; } }
+.fx-dossier { margin-top: 20px; display: flex; gap: 18px 26px; align-items: center; justify-content: space-between; flex-wrap: wrap; min-height: 96px; animation: fxSlide 0.4s cubic-bezier(.2,.8,.2,1); }
+@keyframes fxSlide { 0% { opacity: 0; transform: translateX(-24px); } 100% { opacity: 1; transform: none; } }
+.fx-dossier-name { font-family: var(--fx-thin); font-weight: 200; text-transform: uppercase; font-size: 40px; letter-spacing: 0.3em; line-height: 1; animation: fxTrack 0.7s cubic-bezier(.2,.8,.2,1); }
+@keyframes fxTrack { 0% { letter-spacing: 0.8em; opacity: 0; } 100% { letter-spacing: 0.3em; opacity: 1; } }
+.fx-actions { display: flex; gap: 10px; flex-wrap: wrap; }
+
+/* deck builder */
+.fx-deck-layout { display: grid; grid-template-columns: minmax(0,1fr) 300px; gap: 20px; margin-top: 18px; align-items: start; }
+@media (max-width: 820px) { .fx-deck-layout { grid-template-columns: 1fr; } }
+.fx-pool { max-height: calc(100vh - 230px); min-height: 380px; overflow-y: auto; padding: 4px 10px 20px 4px; }
+.fx-pool-title { display: flex; align-items: center; gap: 12px; margin: 16px 0 4px; } .fx-pool-title::after { content: ""; flex: 1; height: 1px; background: var(--fx-line); }
+.fx-pool-cards { display: flex; flex-wrap: wrap; gap: 4px 2px; }
+.fx-pcard { position: relative; animation: fxDeal 0.45s cubic-bezier(.2,.8,.2,1) backwards; animation-delay: calc(var(--i) * 26ms); transition: transform 0.16s; }
+.fx-pcard:hover { transform: translateY(-5px); z-index: 3; }
+.fx-pcard.is-locked { opacity: 0.45; filter: grayscale(0.7); }
+@keyframes fxDeal { 0% { opacity: 0; transform: translate(-40px,-30px) rotate(-8deg) scale(0.85); } 100% { opacity: 1; transform: none; } }
+.fx-count { position: absolute; top: 0; right: 0; z-index: 4; min-width: 26px; height: 26px; padding: 0 6px; border-radius: 13px; background: var(--fx-rust); color: #fff; font-family: var(--fx-display); font-weight: 800; font-size: 14px; display: flex; align-items: center; justify-content: center; border: 2px solid #120d0a; animation: fxPopIn 0.3s cubic-bezier(.2,1.6,.4,1); }
+@keyframes fxPopIn { 0% { transform: scale(0.2); } 100% { transform: scale(1); } }
+.fx-ring { position: absolute; inset: 6px; border: 2px solid var(--fx-ember); border-radius: 10px; pointer-events: none; z-index: 4; animation: fxRing 0.5s ease-out forwards; }
+@keyframes fxRing { 0% { opacity: 0.9; transform: scale(0.92); } 100% { opacity: 0; transform: scale(1.12); } }
+.fx-deck { position: sticky; top: 14px; }
+.fx-deck-num { font-family: var(--fx-thin); font-weight: 200; font-size: 44px; line-height: 1; } .fx-deck-num small { font-size: 18px; color: var(--fx-muted); }
+.fx-meter { display: grid; grid-template-columns: repeat(30,1fr); gap: 2px; margin: 10px 0 14px; } .fx-meter i { height: 8px; background: rgba(255,255,255,0.08); transition: background 0.25s; } .fx-meter i.on { background: var(--fx-rust); } .fx-meter.full i.on { background: var(--fx-ok); }
+.fx-curve { display: flex; align-items: flex-end; gap: 4px; height: 58px; margin-bottom: 12px; } .fx-curve div { flex: 1; display: flex; flex-direction: column; align-items: center; justify-content: flex-end; height: 100%; font-size: 10px; color: var(--fx-dim); gap: 2px; }
+.fx-curve i { display: block; width: 100%; background: linear-gradient(180deg,var(--fx-ember),var(--fx-rust)); min-height: 2px; transition: height 0.35s cubic-bezier(.2,.8,.2,1); }
+.fx-deck-list { max-height: 330px; overflow-y: auto; margin: 0 -6px; }
+.fx-row { display: flex; align-items: center; gap: 10px; padding: 6px; border-bottom: 1px solid var(--fx-soft); cursor: pointer; font-size: 13.5px; animation: fxRowIn 0.32s cubic-bezier(.2,.8,.2,1); transition: background 0.12s; }
+.fx-row:hover { background: rgba(197,71,47,0.16); }
+@keyframes fxRowIn { 0% { opacity: 0; transform: translateX(26px); background: rgba(233,148,74,0.35); } 100% { opacity: 1; transform: none; } }
+.fx-cost { width: 22px; height: 22px; border-radius: 50%; background: #1f6b3c; border: 1px solid #6fe39a; color: #eafff1; font-family: var(--fx-display); font-weight: 800; font-size: 12.5px; display: flex; align-items: center; justify-content: center; flex-shrink: 0; }
+.fx-fly { position: fixed; z-index: 500; pointer-events: none; padding: 5px 10px; background: var(--fx-rust); color: #fff; font-family: var(--fx-display); font-weight: 700; font-size: 13px; letter-spacing: 0.08em; text-transform: uppercase; border-radius: var(--fx-radius); white-space: nowrap; box-shadow: 0 6px 18px rgba(0,0,0,0.6); }
+
+/* stats, tables, quests, shop, settings */
+.fx-stats { display: flex; gap: 14px 34px; flex-wrap: wrap; margin-top: 8px; }
+.fx-stat b { display: block; font-family: var(--fx-thin); font-weight: 200; font-size: 34px; line-height: 1.1; } .fx-stat span { font-family: var(--fx-display); text-transform: uppercase; letter-spacing: 0.2em; font-size: 11px; color: var(--fx-muted); }
+.fx-table { width: 100%; border-collapse: collapse; font-size: 13.5px; }
+.fx-table th { text-align: left; font-family: var(--fx-display); text-transform: uppercase; letter-spacing: 0.2em; font-size: 11px; color: var(--fx-rust); padding: 8px; border-bottom: 1px solid var(--fx-line); }
+.fx-table td { padding: 8px; border-bottom: 1px solid var(--fx-soft); } .fx-table tr.me td { color: var(--fx-ember); font-weight: 700; }
+.fx-list { display: flex; flex-direction: column; gap: 10px; margin-top: 16px; }
+.fx-quest { animation: fxRise 0.5s cubic-bezier(.2,.8,.2,1) backwards; animation-delay: calc(var(--i) * 70ms); }
+.fx-quest.done { opacity: 0.6; }
+.fx-bar { height: 6px; background: rgba(255,255,255,0.08); margin-top: 10px; overflow: hidden; } .fx-bar i { display: block; height: 100%; width: 0; background: linear-gradient(90deg,var(--fx-rust),var(--fx-ember)); animation: fxGrow 0.9s 0.25s cubic-bezier(.2,.8,.2,1) forwards; }
+.fx-quest.done .fx-bar i { background: var(--fx-ok); }
+@keyframes fxGrow { 0% { width: 0; } 100% { width: var(--w); } }
+.fx-grid { display: grid; grid-template-columns: repeat(auto-fill,minmax(210px,1fr)); gap: 12px; margin-top: 10px; }
+.fx-shop-hero { display: flex; gap: 12px; align-items: center; } .fx-shop-thumb { width: 56px; height: 56px; flex-shrink: 0; overflow: hidden; border: 1px solid var(--fx-line); border-radius: var(--fx-radius); }
+.fx-option { display: flex; gap: 14px; align-items: center; width: 100%; text-align: left; padding: 14px 16px; margin-top: 10px; background: var(--fx-panel); border: 1px solid var(--fx-line); color: inherit; font: inherit; cursor: pointer; border-radius: var(--fx-radius); transition: border-color 0.15s, background 0.15s; }
+.fx-option:hover { border-color: var(--fx-muted); } .fx-option.on { border-color: var(--fx-ember); background: rgba(196,98,45,0.12); }
+.fx-radio { width: 16px; height: 16px; border: 1px solid var(--fx-muted); border-radius: 50%; flex-shrink: 0; display: flex; align-items: center; justify-content: center; }
+.fx-option.on .fx-radio { border-color: var(--fx-ember); } .fx-option.on .fx-radio::after { content: ""; width: 8px; height: 8px; border-radius: 50%; background: var(--fx-ember); }
+.fx-option b { display: block; font-family: var(--fx-display); font-stretch: condensed; text-transform: uppercase; letter-spacing: 0.14em; font-size: 15px; } .fx-option small { display: block; color: var(--fx-muted); font-size: 12.5px; margin-top: 2px; }
+.fx-paper { background: #f1ebdf; color: #111; padding: 14px; margin-top: 12px; border-radius: var(--fx-radius); }
+.fx-modal-back { position: fixed; inset: 0; background: rgba(6,5,4,0.8); display: flex; align-items: center; justify-content: center; z-index: 300; padding: 18px; animation: dxModalIn 0.2s; }
+.fx-modal { background: var(--fx-solid); border: 1px solid var(--fx-line); border-radius: var(--fx-radius); padding: 24px; max-width: 400px; text-align: center; animation: fxRise 0.3s cubic-bezier(.2,.8,.2,1); }
+.fx-radar { position: relative; width: 190px; height: 190px; margin: 34px auto 26px; border-radius: 50%; border: 1px solid var(--fx-line); background: radial-gradient(circle,rgba(196,98,45,0.14),rgba(0,0,0,0) 70%); overflow: hidden; }
+.fx-radar::before { content: ""; position: absolute; inset: 0; border-radius: 50%; background: conic-gradient(from 0deg,rgba(233,148,74,0) 0deg,rgba(233,148,74,0) 270deg,rgba(233,148,74,0.55) 360deg); animation: fxSweep 2.2s linear infinite; }
+.fx-radar::after { content: ""; position: absolute; inset: 30%; border-radius: 50%; border: 1px solid var(--fx-line); box-shadow: 0 0 0 38px rgba(255,255,255,0.02); }
+@keyframes fxSweep { 100% { transform: rotate(360deg); } }
+/* the shared Rules pop-up, re-coloured */
+.fx-rules > div { background: var(--fx-solid) !important; border: 1px solid var(--fx-line) !important; border-radius: var(--fx-radius) !important; color: var(--fx-text) !important; font-family: var(--fx-font) !important; }
+.fx-rules > div div { color: inherit !important; border-color: var(--fx-line) !important; }
+.fx-rules > div > div:first-child { font-family: var(--fx-thin) !important; font-weight: 200 !important; letter-spacing: 0.3em; text-transform: uppercase; font-size: 22px !important; }
+.fx-rules > div > div > div:first-child { color: var(--fx-ember) !important; font-family: var(--fx-display) !important; text-transform: uppercase; letter-spacing: 0.16em; font-size: 12px !important; }
+.fx-rules > div > div > div:last-child { color: var(--fx-muted) !important; font-size: 13px !important; } .fx-rules b { color: var(--fx-text); }
+.fx-rules button { background: rgba(255,255,255,0.03) !important; border: 1px solid var(--fx-line) !important; color: var(--fx-text) !important; font-family: var(--fx-display) !important; text-transform: uppercase; letter-spacing: 0.18em; border-radius: var(--fx-radius) !important; }
+@media (max-width: 560px) { .fx-brand { font-size: 17px; letter-spacing: 0.3em; } .fx-h1 { font-size: 23px; } .fx-dossier-name { font-size: 28px; } .fx-wrap { padding: 0 14px 50px; } .fx-heroes { gap: 8px; } .fx-hero-name { font-size: 14px; } .fx-hero-power { display: none; } }
+
+/* ---- Pixel Art theme ---- */
+.fx-theme-pixel { --fx-panel: rgba(28,28,16,0.94); --fx-solid: #1c1c10; --fx-line: #5a5a34; --fx-soft: rgba(240,220,140,0.12); --fx-text: #f0dc8c; --fx-muted: #a8a068; --fx-dim: #7a7448;
+  --fx-rust: #d07020; --fx-ember: #f0b030; --fx-danger: #c8301e; --fx-ok: #8fd040; --fx-gold: #f0c040; --fx-radius: 0px;
+  --fx-font: ${DX_PIXEL_FONT}; --fx-display: ${DX_PIXEL_FONT}; --fx-thin: ${DX_PIXEL_FONT}; font-size: 14px; }
+.fx-theme-pixel, .fx-theme-pixel * { letter-spacing: 0 !important; font-weight: 400 !important; font-stretch: normal !important; -webkit-font-smoothing: none; }
+.fx-theme-pixel img { image-rendering: crisp-edges; image-rendering: pixelated; }
+.fx-theme-pixel .fx-backdrop { background: #14140c; }
+.fx-theme-pixel .fx-brand { font-size: 24px; } .fx-theme-pixel .fx-h1 { font-size: 32px; } .fx-theme-pixel .fx-dossier-name { font-size: 40px; animation: none; }
+.fx-theme-pixel .fx-eyebrow, .fx-theme-pixel .fx-nav button, .fx-theme-pixel .fx-table th, .fx-theme-pixel .fx-stat span { font-size: 13px; }
+.fx-theme-pixel .fx-sub, .fx-theme-pixel .fx-hero-power, .fx-theme-pixel .fx-option small { font-size: 12px; }
+.fx-theme-pixel .fx-stat b, .fx-theme-pixel .fx-deck-num { font-size: 32px; }
+.fx-theme-pixel .fx-top { border-bottom: 3px solid var(--fx-line); }
+.fx-theme-pixel .fx-chip { border: 3px solid #0a0a06; background: #2a2a18; }
+.fx-theme-pixel .fx-live { border-radius: 0; box-shadow: none; animation: dxpShield 1s steps(1) infinite; }
+.fx-theme-pixel .fx-nav button::after { height: 3px; transition: none; }
+.fx-theme-pixel .fx-panel, .fx-theme-pixel .fx-option, .fx-theme-pixel .fx-modal { border: 3px solid #0a0a06; box-shadow: inset 0 0 0 3px var(--fx-line), 6px 6px 0 rgba(0,0,0,0.5); }
+.fx-theme-pixel .fx-option.on { box-shadow: inset 0 0 0 3px var(--fx-ember), 6px 6px 0 rgba(0,0,0,0.5); background: #3a3214; }
+.fx-theme-pixel .fx-panel::before { display: none; }
+.fx-theme-pixel .fx-btn { border: 3px solid #0a0a06; background: #55553a; color: #f4e9b0; text-shadow: 2px 2px 0 #0a0a06; transition: none; padding: 10px 16px; box-shadow: inset 3px 3px 0 #8c8c62, inset -3px -3px 0 #2c2c1c, 4px 4px 0 #0a0a06; }
+.fx-theme-pixel .fx-btn:hover:not(:disabled) { background: #6c6c4a; border-color: #0a0a06; color: #fff; }
+.fx-theme-pixel .fx-btn:active:not(:disabled) { transform: translate(3px,3px); box-shadow: inset 3px 3px 0 #8c8c62, inset -3px -3px 0 #2c2c1c; }
+.fx-theme-pixel .fx-btn-primary, .fx-theme-pixel .fx-btn-primary:hover:not(:disabled) { background: #d09a1a; color: #1c1200; text-shadow: none; box-shadow: inset 3px 3px 0 #f6d264, inset -3px -3px 0 #8a5c08, 4px 4px 0 #0a0a06; }
+.fx-theme-pixel .fx-hero { border: 3px solid #0a0a06; transition: none; animation-timing-function: steps(5); }
+.fx-theme-pixel .fx-hero-art { filter: none; transition: none; transform: none !important; }
+.fx-theme-pixel .fx-hero::after { background: linear-gradient(180deg,rgba(10,10,6,0) 0,rgba(10,10,6,0) 62%,rgba(10,10,6,0.9) 62%,rgba(10,10,6,0.9) 100%); }
+.fx-theme-pixel .fx-hero.is-picked { box-shadow: 0 0 0 4px var(--fx-ember), 8px 8px 0 4px rgba(0,0,0,0.5); }
+.fx-theme-pixel .fx-hero-bar { width: 6px; transition: none; } .fx-theme-pixel .fx-scan { animation-timing-function: steps(7) !important; background: rgba(240,176,48,0.5); height: 8%; }
+.fx-theme-pixel .fx-tag, .fx-theme-pixel .fx-cost, .fx-theme-pixel .fx-count, .fx-theme-pixel .fx-radio, .fx-theme-pixel .fx-option.on .fx-radio::after, .fx-theme-pixel .fx-ring { border-radius: 0; }
+.fx-theme-pixel .fx-count { border: 3px solid #0a0a06; } .fx-theme-pixel .fx-fly { border: 3px solid #0a0a06; }
+.fx-theme-pixel .fx-pcard, .fx-theme-pixel .fx-row, .fx-theme-pixel .fx-dossier, .fx-theme-pixel .fx-count, .fx-theme-pixel .fx-quest, .fx-theme-pixel .fx-modal, .fx-theme-pixel .fx-ring { animation-timing-function: steps(5); }
+.fx-theme-pixel .fx-pcard { transition: none; }
+.fx-theme-pixel .fx-curve i { background: var(--fx-ember); transition: none; } .fx-theme-pixel .fx-bar { height: 9px; } .fx-theme-pixel .fx-bar i { background: var(--fx-ember); animation-timing-function: steps(8); }
+.fx-theme-pixel .fx-radar { border-radius: 0; border: 3px solid var(--fx-line); } .fx-theme-pixel .fx-radar::before { border-radius: 0; animation-timing-function: steps(12); } .fx-theme-pixel .fx-radar::after { border-radius: 0; }
+.fx-theme-pixel .fx-rules > div, .fx-theme-pixel .fx-rules > div * { font-family: ${DX_PIXEL_FONT} !important; }
+.fx-theme-pixel .fx-rules > div { border: 3px solid #0a0a06 !important; box-shadow: inset 0 0 0 3px var(--fx-line); }
+@media (prefers-reduced-motion: reduce) { .fx-menu *, .fx-menu *::before, .fx-menu *::after { animation-duration: 0.01s !important; animation-delay: 0s !important; transition-duration: 0.01s !important; } }
+`;
+
+function FxBackdrop() {
+  const pixel = useDisplay().mode === "pixel";
+  if (pixel) return <div className="fx-backdrop"><PixelBackdrop styleId="rustyard" dim={0.66} /></div>;
+  const stain = dxNoiseTile("stain"), grain = dxNoiseTile("grain");
+  return (
+    <div className="fx-backdrop">
+      {stain && <div style={{ backgroundImage: `url(${stain})`, backgroundSize: "760px 760px", opacity: 0.8 }} />}
+      <svg viewBox="0 0 1600 1000" preserveAspectRatio="xMidYMid slice" width="100%" height="100%">
+        <path d={DX_CRACKS_A} stroke="rgba(0,0,0,0.55)" strokeWidth="1.6" fill="none" />
+        <g stroke="rgba(233,148,74,0.10)" strokeWidth="1"><path d="M90 640l260-48M130 664l190-26M1160 170l280 70M1200 212l180 36M640 930l320-36" /></g>
+      </svg>
+      {grain && <div style={{ backgroundImage: `url(${grain})`, backgroundSize: "256px 256px", opacity: 0.85 }} />}
+      <div style={{ background: "radial-gradient(ellipse at 50% 40%,rgba(0,0,0,0) 40%,rgba(0,0,0,0.6) 100%)" }} />
+    </div>
+  );
+}
+
+function FxScreen({ title, sub, onBack, backLabel, children, eyebrow }) {
+  return (
+    <div>
+      {eyebrow && <div className="fx-eyebrow" style={{ marginTop: 26 }}>{eyebrow}</div>}
+      <h2 className="fx-h1" style={eyebrow ? { marginTop: 4 } : undefined}>{title}</h2>
+      {sub && <p className="fx-sub">{sub}</p>}
+      {children}
+      {onBack && <div style={{ marginTop: 26 }}><button className="fx-btn" onClick={onBack}>← {backLabel || "Back"}</button></div>}
+    </div>
+  );
+}
+
+function FxHeroSelect({ onPick, onBuildDeck, onPlayCpu, onShowLeaderboard, onShowQuests, onShowShop, onShowSettings, myProfile, myLegendaryRank, customDecks }) {
+  const [hero, setHero] = useState(null);
+  const [showRules, setShowRules] = useState(false);
+  const [lockedHeroClicked, setLockedHeroClicked] = useState(null);
+  const hasCustom = hero && customDecks && customDecks[hero];
+  const tier = myProfile ? (myProfile.tier || "Bronze") : null;
+  const left = myProfile ? Math.max(0, 5 - (myProfile.winStreak || 0)) : 0;
+  return (
+    <div>
+      <div className="fx-nav">
+        <button onClick={onShowLeaderboard}>Leaderboard</button>
+        <button onClick={onShowQuests}>Quests</button>
+        <button onClick={onShowShop}>Shop</button>
+        <button onClick={() => setShowRules(true)}>Rules</button>
+        <button onClick={onShowSettings}>Settings</button>
+      </div>
+      {showRules && <RulesModal themed onClose={() => setShowRules(false)} />}
+
+      <div className="fx-eyebrow" style={{ marginTop: 30 }}>
+        {myProfile ? <>Rank · {tier} — {tier === "Legendary" ? (myLegendaryRank ? `#${myLegendaryRank}` : "calculating...") : `${left} win${left === 1 ? "" : "s"} left to promote`}</> : "Welcome, survivor"}
+      </div>
+      <h2 className="fx-h1" style={{ marginTop: 4 }}>Choose your survivor</h2>
+
+      <div className={"fx-heroes" + (hero ? " has-pick" : "")}>
+        {HEROES.map((h, i) => {
+          const locked = !isHeroUnlocked(h, myProfile);
+          return (
+            <button
+              key={h} type="button"
+              className={"fx-hero" + (hero === h ? " is-picked" : "") + (locked ? " is-locked" : "")}
+              style={{ "--i": i, "--fc": dxFaction(h).c }}
+              onClick={() => { if (locked) setLockedHeroClicked(h); else setHero(h); }}
+            >
+              <div className="fx-hero-art"><DxHeroArt hero={h} /></div>
+              <div className="fx-hero-bar" /><div className="fx-scan" />
+              {locked && <div className="fx-tag fx-tag-lock">Locked</div>}
+              {customDecks && customDecks[h] && !locked && <div className="fx-tag fx-tag-custom">Custom deck</div>}
+              <div className="fx-hero-info">
+                <div className="fx-hero-name">{h}</div>
+                <div className="fx-hero-power">{HERO_POWERS[h].name}: {HERO_POWERS[h].desc}</div>
+              </div>
+            </button>
+          );
+        })}
+      </div>
+
+      {hero ? (
+        <div className="fx-dossier" key={hero}>
+          <div>
+            <div className="fx-eyebrow" style={{ color: dxFaction(hero).c }}>{HERO_POWERS[hero].name} ({HERO_POWERS[hero].cost} AP) — {HERO_POWERS[hero].desc}</div>
+            <div className="fx-dossier-name" style={{ marginTop: 8 }}>{hero}</div>
+            <div className="fx-sub" style={{ marginTop: 8 }}>{hasCustom ? "Using your custom deck for this hero." : "Using the default preset deck."}</div>
+          </div>
+          <div className="fx-actions">
+            <button className="fx-btn fx-btn-primary" onClick={() => onPick(hero)}>Find Match →</button>
+            <button className="fx-btn" onClick={() => onPlayCpu(hero)}>Play vs CPU</button>
+            <button className="fx-btn" onClick={() => onBuildDeck(hero)}>{hasCustom ? "Edit Deck" : "Build Deck"}</button>
+          </div>
+        </div>
+      ) : (
+        <div className="fx-dossier" style={{ animation: "none" }}>
+          <p className="fx-sub">Pick a survivor, then choose a game mode.</p>
+          <div className="fx-actions">
+            <button className="fx-btn fx-btn-primary" disabled>Find Match →</button>
+            <button className="fx-btn" disabled>Play vs CPU</button>
+            <button className="fx-btn" disabled>Build Deck</button>
+          </div>
+        </div>
+      )}
+
+      {lockedHeroClicked && (
+        <div className="fx-modal-back" onClick={() => setLockedHeroClicked(null)}>
+          <div className="fx-modal" onClick={(e) => e.stopPropagation()}>
+            <div className="fx-h1" style={{ margin: 0, fontSize: 22 }}>{lockedHeroClicked} is locked</div>
+            <p className="fx-sub" style={{ marginTop: 10 }}>Unlock this hero in the Shop to play as them.</p>
+            <div className="fx-actions" style={{ justifyContent: "center", marginTop: 18 }}>
+              <button className="fx-btn fx-btn-primary" onClick={() => { setLockedHeroClicked(null); onShowShop(); }}>Go to Shop</button>
+              <button className="fx-btn" onClick={() => setLockedHeroClicked(null)}>Close</button>
+            </div>
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
+function FxDeckBuilder({ hero, initialDeck, onSave, onCancel, myProfile, onBuyCard }) {
+  // Same deck rules as DeckBuilderScreen: 30 cards, this hero's cards or neutrals, copy limits per card.
+  const pool = CARD_DB.filter((c) => c.hero === hero || !c.hero);
+  const [counts, setCounts] = useState(() => {
+    const c = {};
+    if (initialDeck) initialDeck.forEach((id) => { c[id] = (c[id] || 0) + 1; });
+    return c;
+  });
+  const [saveError, setSaveError] = useState(null);
+  const [lockedCardClicked, setLockedCardClicked] = useState(null);
+  const [lastAdd, setLastAdd] = useState(null); // {id, t} - which card just went in, for the pulse
+  const deckRef = useRef(null);
+  const rootRef = useRef(null);
+  const total = Object.values(counts).reduce((a, b) => a + b, 0);
+  const rarityOrder = ["common", "rare", "epic", "unique"];
+
+  // A small name tag flies from the card into the deck list.
+  function fly(fromEl, card) {
+    try {
+      if (!fromEl || !deckRef.current || !rootRef.current || typeof fromEl.animate !== "function") return;
+      const a = fromEl.getBoundingClientRect(), b = deckRef.current.getBoundingClientRect();
+      const tag = document.createElement("div");
+      tag.className = "fx-fly";
+      tag.textContent = card.name;
+      tag.style.left = a.left + a.width / 2 - 50 + "px";
+      tag.style.top = a.top + a.height / 2 - 14 + "px";
+      rootRef.current.appendChild(tag);
+      const dx = b.left + b.width / 2 - (a.left + a.width / 2), dy = b.top + 60 - (a.top + a.height / 2);
+      const anim = tag.animate([
+        { transform: "translate(0,0) scale(1.2)", opacity: 1 },
+        { transform: `translate(${dx * 0.5}px,${dy * 0.5 - 50}px) scale(1)`, opacity: 1, offset: 0.55 },
+        { transform: `translate(${dx}px,${dy}px) scale(0.6)`, opacity: 0 },
+      ], { duration: 520, easing: "cubic-bezier(.3,.1,.3,1)" });
+      anim.onfinish = anim.oncancel = () => tag.remove();
+    } catch (e) {}
+  }
+  function addCopy(card, el) {
+    const cur = counts[card.id] || 0;
+    if (cur >= card.copies || total >= 30) return;
+    setCounts({ ...counts, [card.id]: cur + 1 });
+    setLastAdd({ id: card.id, t: Date.now() });
+    fly(el, card);
+  }
+  function removeCopy(cardId) {
+    const cur = counts[cardId] || 0;
+    if (cur <= 1) { const next = { ...counts }; delete next[cardId]; setCounts(next); }
+    else setCounts({ ...counts, [cardId]: cur - 1 });
+  }
+  function handleSave() {
+    const deck = Object.entries(counts).flatMap(([id, n]) => Array(n).fill(id));
+    if (!validateDeck(deck, hero)) {
+      setSaveError("This deck isn't legal — check you have exactly 30 cards, only cards for this hero or neutrals, and no more copies than allowed.");
+      return;
+    }
+    setSaveError(null);
+    onSave(deck);
+  }
+
+  const heroCards = pool.filter((c) => c.hero === hero);
+  const neutralCards = pool.filter((c) => !c.hero);
+  const deckEntries = Object.entries(counts).filter(([, n]) => n > 0)
+    .map(([id, n]) => ({ card: findCard(id), n }))
+    .sort((a, b) => a.card.cost - b.card.cost);
+  const curve = Array(8).fill(0);
+  deckEntries.forEach(({ card, n }) => { curve[Math.min(7, card.cost)] += n; });
+  const curveMax = Math.max(1, ...curve);
+
+  let dealt = 0;
+  const renderSection = (groupLabel, cards) => rarityOrder.map((r) => {
+    const group = cards.filter((c) => c.rarity === r).sort((a, b) => a.cost - b.cost);
+    if (group.length === 0) return null;
+    return (
+      <div key={groupLabel + r}>
+        <div className="fx-eyebrow fx-pool-title" style={{ color: DX_RARITY[r].gem }}><DxTrefoil size={13} color={DX_RARITY[r].gem} />{DX_RARITY[r].label} · {groupLabel}</div>
+        <div className="fx-pool-cards">
+          {group.map((c) => {
+            const cnt = counts[c.id] || 0;
+            const atCap = cnt >= c.copies;
+            const deckFull = total >= 30;
+            const locked = !isCardUnlocked(c, myProfile);
+            const i = Math.min(dealt++, 40);
+            return (
+              <div
+                key={c.id} className={"fx-pcard" + (locked ? " is-locked" : "")} style={{ "--i": i }}
+                onClick={(e) => { if (locked) setLockedCardClicked(c); else addCopy(c, e.currentTarget); }}
+              >
+                <MiniCard cardId={c.id} small disabled={atCap || deckFull || locked} allowDetail />
+                {locked && <div className="fx-tag fx-tag-lock" style={{ top: 2, left: 2 }}>Locked</div>}
+                {!locked && cnt > 0 && <div key={cnt} className="fx-count">{cnt}/{c.copies}</div>}
+                {lastAdd && lastAdd.id === c.id && <div key={lastAdd.t} className="fx-ring" />}
+              </div>
+            );
+          })}
+        </div>
+      </div>
+    );
+  });
+
+  return (
+    <div ref={rootRef}>
+      <div className="fx-eyebrow" style={{ marginTop: 26, color: dxFaction(hero).c }}>Deck builder</div>
+      <h2 className="fx-h1" style={{ marginTop: 4 }}>{hero}</h2>
+      <p className="fx-sub">Tap a card to add a copy. Tap a card in your deck to remove one. Max 2 copies (1 for uniques). Right-click or long-press a card to read it.</p>
+      <div className="fx-deck-layout">
+        <div className="fx-pool">
+          {renderSection(`${hero}'s cards`, heroCards)}
+          {renderSection("Neutral cards", neutralCards)}
+        </div>
+        <div className="fx-panel fx-deck" ref={deckRef}>
+          <div className="fx-eyebrow">Your deck</div>
+          <div className="fx-deck-num" style={{ color: total === 30 ? "var(--fx-ok)" : "var(--fx-text)" }}>{total}<small> / 30</small></div>
+          <div className={"fx-meter" + (total === 30 ? " full" : "")}>{Array.from({ length: 30 }).map((_, i) => <i key={i} className={i < total ? "on" : undefined} />)}</div>
+          <div className="fx-curve" title="How many cards you have at each AP cost">
+            {curve.map((n, i) => <div key={i}><i style={{ height: `${(n / curveMax) * 78}%` }} />{i === 7 ? "7+" : i}</div>)}
+          </div>
+          <div className="fx-deck-list">
+            {deckEntries.length === 0 && <div className="fx-sub" style={{ padding: 6, fontSize: 12.5 }}>No cards yet — tap cards to add them.</div>}
+            {deckEntries.map(({ card, n }) => (
+              <div key={card.id} className="fx-row" onClick={() => removeCopy(card.id)} title="Tap to remove one copy">
+                <span className="fx-cost">{card.cost}</span>
+                <span style={{ flex: 1, minWidth: 0, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", color: DX_RARITY[card.rarity].gem }}>{card.name}</span>
+                <span style={{ color: "var(--fx-muted)" }}>×{n}</span>
+              </div>
+            ))}
+          </div>
+          <div className="fx-actions" style={{ marginTop: 14 }}>
+            <button className="fx-btn fx-btn-primary" style={{ flex: 1 }} disabled={total !== 30} onClick={handleSave}>Save deck</button>
+            <button className="fx-btn fx-btn-sm" onClick={() => setCounts({})}>Clear</button>
+            <button className="fx-btn fx-btn-sm" onClick={onCancel}>Cancel</button>
+          </div>
+          {saveError && <div className="fx-notice">{saveError}</div>}
+        </div>
+      </div>
+      {lockedCardClicked && (
+        <div className="fx-modal-back" onClick={() => setLockedCardClicked(null)}>
+          <div className="fx-modal" onClick={(e) => e.stopPropagation()}>
+            <div className="fx-h1" style={{ margin: 0, fontSize: 20 }}>{lockedCardClicked.name} is locked</div>
+            <p className="fx-sub" style={{ marginTop: 10 }}>Unlock this card for {CARD_UNLOCK_COST[lockedCardClicked.rarity]} Bullets. Need more? Visit the Shop to buy Bullets or unlock a whole hero at once.</p>
+            <div className="fx-actions" style={{ justifyContent: "center", marginTop: 18 }}>
+              <button className="fx-btn fx-btn-primary" disabled={(myProfile?.bullets || 0) < CARD_UNLOCK_COST[lockedCardClicked.rarity]} onClick={() => { onBuyCard(lockedCardClicked); setLockedCardClicked(null); }}>Buy for {CARD_UNLOCK_COST[lockedCardClicked.rarity]} Bullets</button>
+              <button className="fx-btn" onClick={() => setLockedCardClicked(null)}>Close</button>
+            </div>
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
+function FxLegendaryTable({ myUid }) {
+  const [rows, setRows] = useState([]);
+  const [loading, setLoading] = useState(true);
+  const [visibleCount, setVisibleCount] = useState(50);
+  const CAP = 250;
+  useEffect(() => {
+    (async () => {
+      try {
+        const snap = await getDocs(query(collection(db, "users"), where("tier", "==", "Legendary"), limit(500)));
+        const list = snap.docs.map((d) => {
+          const data = d.data();
+          const { monthWins, monthLosses } = monthStatsFor(data);
+          return { id: d.id, displayName: data.displayName || "Player", monthWins, monthLosses, ratio: ratioFor(monthWins, monthLosses) };
+        });
+        list.sort((a, b) => b.ratio - a.ratio || b.monthWins - a.monthWins);
+        setRows(list.slice(0, CAP));
+      } catch (e) {
+        console.error("Legendary leaderboard load failed:", e);
+      }
+      setLoading(false);
+    })();
+  }, []);
+  const myRankIdx = rows.findIndex((r) => r.id === myUid);
+  return (
+    <div className="fx-panel" style={{ marginTop: 16 }}>
+      <div className="fx-eyebrow" style={{ color: "#c070ff" }}>Legendary League — this month</div>
+      {loading ? <p className="fx-sub" style={{ marginTop: 8 }}>Loading...</p> : rows.length === 0 ? <p className="fx-sub" style={{ marginTop: 8 }}>No Legendary players yet this month.</p> : (
+        <>
+          {myRankIdx !== -1 && <div style={{ marginTop: 8, color: "var(--fx-ember)", fontWeight: 700 }}>Your current rank: #{myRankIdx + 1}</div>}
+          <table className="fx-table" style={{ marginTop: 8 }}>
+            <thead><tr><th>#</th><th>Player</th><th>W</th><th>L</th><th>Ratio</th></tr></thead>
+            <tbody>
+              {rows.slice(0, visibleCount).map((r, i) => (
+                <tr key={r.id} className={r.id === myUid ? "me" : undefined}><td>{i + 1}</td><td>{r.displayName}</td><td>{r.monthWins}</td><td>{r.monthLosses}</td><td>{r.ratio.toFixed(2)}</td></tr>
+              ))}
+            </tbody>
+          </table>
+          {visibleCount < rows.length && <div style={{ textAlign: "center", marginTop: 12 }}><button className="fx-btn fx-btn-sm" onClick={() => setVisibleCount((v) => Math.min(v + 50, CAP))}>Show more</button></div>}
+        </>
+      )}
+    </div>
+  );
+}
+function FxLeaderboard({ onBack, myProfile, sessionId, profileLoading }) {
+  const p = myProfile || { wins: 0, losses: 0, winStreak: 0, lossStreak: 0, tier: "Bronze" };
+  const { monthWins, monthLosses } = monthStatsFor(p);
+  if (profileLoading) return <FxScreen title="Leaderboard" sub="Loading your stats..." onBack={onBack} />;
+  const tier = p.tier || "Bronze";
+  const isTop = tier === "Legendary";
+  const onLossStreak = (p.lossStreak || 0) > 0;
+  const canDemote = TIERS.indexOf(tier) > 0;
+  return (
+    <FxScreen title="Leaderboard" onBack={onBack}>
+      <div className="fx-panel" style={{ marginTop: 18, display: "flex", gap: 20, alignItems: "center", flexWrap: "wrap" }}>
+        <div style={{ width: 8, alignSelf: "stretch", background: TIER_STYLES[tier].gradient }} />
+        <div style={{ flex: 1, minWidth: 220 }}>
+          <div className="fx-eyebrow">Your tier</div>
+          <div className="fx-dossier-name" style={{ marginTop: 6 }}>{tier}</div>
+          <div className="fx-sub" style={{ marginTop: 8 }}>
+            {!isTop && !onLossStreak && <>{5 - (p.winStreak || 0)} more win{5 - (p.winStreak || 0) === 1 ? "" : "s"} in a row to reach {TIERS[TIERS.indexOf(tier) + 1]}</>}
+            {onLossStreak && canDemote && <span style={{ color: "var(--fx-danger)" }}>{5 - p.lossStreak} more loss{5 - p.lossStreak === 1 ? "" : "es"} in a row and you'll drop to {TIERS[TIERS.indexOf(tier) - 1]}</span>}
+            {onLossStreak && !canDemote && <>Bronze is the floor — no further demotion.</>}
+            {isTop && !onLossStreak && <>You're at the top tier.</>}
+          </div>
+        </div>
+      </div>
+      <div className="fx-eyebrow" style={{ marginTop: 24 }}>All-time</div>
+      <div className="fx-stats">
+        <div className="fx-stat"><b>{p.wins || 0}</b><span>Wins</span></div>
+        <div className="fx-stat"><b>{p.losses || 0}</b><span>Losses</span></div>
+        <div className="fx-stat"><b>{p.highestTier || "Bronze"}</b><span>Highest tier</span></div>
+      </div>
+      <div className="fx-eyebrow" style={{ marginTop: 24 }}>This month</div>
+      <div className="fx-stats">
+        <div className="fx-stat"><b>{monthWins}</b><span>Wins</span></div>
+        <div className="fx-stat"><b>{monthLosses}</b><span>Losses</span></div>
+        <div className="fx-stat"><b>{p.winStreak || 0}</b><span>Win streak</span></div>
+        <div className="fx-stat"><b>{ratioFor(monthWins, monthLosses).toFixed(2)}</b><span>Ratio</span></div>
+      </div>
+      {p.tier === "Legendary" && <FxLegendaryTable myUid={sessionId} />}
+    </FxScreen>
+  );
+}
+
+function FxQuests({ onBack, myProfile, profileLoading }) {
+  const wp = weeklyProgressFor(myProfile);
+  const tier = myProfile ? (myProfile.tier || "Bronze") : "Bronze";
+  const quests = selectWeeklyQuests(wp.weekId);
+  const claimed = new Set(wp.claimedQuestIds || []);
+  if (profileLoading) return <FxScreen title="Weekly quests" sub="Loading your progress..." onBack={onBack} />;
+  return (
+    <FxScreen title="Weekly quests" sub={`5 quests, refreshed every Sunday at 8:00 PM Eastern. Each completed quest pays out ${QUEST_BULLET_REWARD} Bullets.`} onBack={onBack}>
+      <div className="fx-list">
+        {quests.map((q, i) => {
+          const prog = questProgress(q, wp, tier);
+          const done = claimed.has(q.id) || prog.done;
+          const pct = Math.max(0, Math.min(100, (Math.min(prog.current, prog.target) / Math.max(1, prog.target)) * 100));
+          return (
+            <div key={q.id} className={"fx-panel fx-quest" + (done ? " done" : "")} style={{ "--i": i }}>
+              <div style={{ display: "flex", justifyContent: "space-between", gap: 12, alignItems: "baseline", flexWrap: "wrap" }}>
+                <div className="fx-hero-name">{q.title}</div>
+                <div className="fx-eyebrow" style={{ color: done ? "var(--fx-ok)" : "var(--fx-gold)" }}>{done ? "Completed" : `+${QUEST_BULLET_REWARD} Bullets`}</div>
+              </div>
+              <div className="fx-sub" style={{ marginTop: 4 }}>{questDescription(q)}</div>
+              <div className="fx-bar"><i style={{ "--w": `${done ? 100 : pct}%` }} /></div>
+              <div style={{ fontSize: 12.5, marginTop: 6, color: "var(--fx-muted)" }}>{Math.min(prog.current, prog.target)} / {prog.target}</div>
+            </div>
+          );
+        })}
+      </div>
+    </FxScreen>
+  );
+}
+
+function FxShop({ onBack, myProfile, user, onBuyUnlockAll, onBuyHero }) {
+  const [showAdmin, setShowAdmin] = useState(false);
+  const currency = guessCurrency();
+  const symbol = currency === "EUR" ? "€" : "$";
+  const isAdmin = user && user.email && ADMIN_EMAILS.includes(user.email);
+  const bullets = myProfile?.bullets || 0;
+  return (
+    <FxScreen title="Shop" sub={<>You have <b style={{ color: "var(--fx-gold)" }}>{bullets}</b> Bullets.</>} onBack={onBack}>
+      <div className="fx-panel" style={{ marginTop: 18, display: "flex", gap: 16, alignItems: "center", justifyContent: "space-between", flexWrap: "wrap" }}>
+        <div>
+          <div className="fx-hero-name">Unlock everything</div>
+          <div className="fx-sub" style={{ marginTop: 2 }}>All 6 heroes and every Standard Set card, unlocked at once.</div>
+        </div>
+        <button className="fx-btn fx-btn-primary" onClick={onBuyUnlockAll} disabled={!!myProfile?.unlockedAll || bullets < UNLOCK_ALL_COST}>
+          {myProfile?.unlockedAll ? "Already unlocked" : `Unlock all — ${UNLOCK_ALL_COST} Bullets`}
+        </button>
+      </div>
+
+      <div className="fx-eyebrow" style={{ marginTop: 26 }}>Unlock a hero</div>
+      <div className="fx-grid">
+        {HEROES.map((hero) => {
+          const owned = isHeroUnlocked(hero, myProfile);
+          return (
+            <div key={hero} className="fx-panel" style={{ opacity: owned ? 0.6 : 1 }}>
+              <div className="fx-shop-hero">
+                <div className="fx-shop-thumb"><DxHeroArt hero={hero} /></div>
+                <div className="fx-hero-name" style={{ color: dxFaction(hero).c }}>{hero}</div>
+              </div>
+              <div className="fx-sub" style={{ fontSize: 12.5, marginTop: 8 }}>Unlocks all {hero} cards, plus 1 random neutral epic and 1 random neutral unique card.</div>
+              <button className="fx-btn fx-btn-sm" style={{ marginTop: 10, width: "100%" }} onClick={() => onBuyHero(hero)} disabled={owned || bullets < HERO_UNLOCK_COST}>
+                {owned ? "Unlocked" : `Unlock — ${HERO_UNLOCK_COST} Bullets`}
+              </button>
+            </div>
+          );
+        })}
+      </div>
+
+      <div className="fx-eyebrow" style={{ marginTop: 26 }}>Booster packs</div>
+      <p className="fx-sub" style={{ fontSize: 12.5 }}>Coming in a future update — placeholders for now.</p>
+      <div className="fx-grid">
+        {[{ label: "2 Booster Packs", cost: 2250 }, { label: "10 Booster Packs", cost: 7500 }].map((b) => (
+          <div key={b.label} className="fx-panel" style={{ opacity: 0.5 }}>
+            <div className="fx-hero-name">{b.label}</div>
+            <button className="fx-btn fx-btn-sm" style={{ marginTop: 10 }} disabled>{b.cost} Bullets</button>
+          </div>
+        ))}
+      </div>
+
+      <div className="fx-eyebrow" style={{ marginTop: 26 }}>Buy more Bullets</div>
+      <p className="fx-sub" style={{ fontSize: 12.5 }}>Payment processing isn't connected yet - these are placeholders. Currency shown is a rough guess from your browser's locale, not verified location.</p>
+      <div className="fx-grid">
+        {[{ bullets: 7500, price: 9.99 }, { bullets: 2250, price: 2.99 }].map((b) => (
+          <div key={b.bullets} className="fx-panel">
+            <div className="fx-hero-name" style={{ color: "var(--fx-gold)" }}>{b.bullets} Bullets</div>
+            <button className="fx-btn fx-btn-sm" style={{ marginTop: 10 }} onClick={() => alert("Payment processing isn't connected yet.")}>{symbol}{b.price.toFixed(2)}</button>
+          </div>
+        ))}
+      </div>
+
+      {isAdmin && (
+        <div style={{ marginTop: 28 }}>
+          <button className="fx-btn" style={{ borderColor: "var(--fx-ok)", color: "var(--fx-ok)" }} onClick={() => setShowAdmin((v) => !v)}>Admin — grant Bullets</button>
+          {/* the admin form itself is the same one the notepad Shop uses, shown on a plain light panel */}
+          {showAdmin && <div className="fx-paper" style={{ fontFamily: FONT }}><AdminGrantPanel /></div>}
+        </div>
+      )}
+    </FxScreen>
+  );
+}
+
+function FxSearching({ hero, onCancel }) {
+  const [dots, setDots] = useState("");
+  useEffect(() => {
+    const t = setInterval(() => setDots((d) => (d.length >= 3 ? "" : d + ".")), 500);
+    return () => clearInterval(t);
+  }, []);
+  return (
+    <div style={{ textAlign: "center", paddingTop: 20 }}>
+      <div className="fx-radar" />
+      <h2 className="fx-h1" style={{ marginTop: 0 }}>Searching{dots}</h2>
+      <p className="fx-sub">Playing as {hero}. Checks the queue every couple seconds — no need to keep this tab focused.</p>
+      <button className="fx-btn" style={{ marginTop: 22 }} onClick={onCancel}>Cancel</button>
+    </div>
+  );
+}
+
+function FxSettings({ onBack }) {
+  const display = useDisplay();
+  const sample = findCardByName("Albert Tesla") || CARD_DB[0];
+  return (
+    <FxScreen title="Settings" onBack={onBack}>
+      <div className="fx-eyebrow" style={{ marginTop: 22 }}>Display options</div>
+      <p className="fx-sub">Changes how the game looks on this device only. It never changes the rules, your cards or your rank.</p>
+      {DISPLAY_MODES.map((mode) => (
+        <button key={mode.id} type="button" className={"fx-option" + (display.mode === mode.id ? " on" : "")} onClick={() => display.setDisplay({ mode: mode.id })} aria-pressed={display.mode === mode.id}>
+          <span className="fx-radio" />
+          <span><b>{mode.name}{mode.id === DEFAULT_DISPLAY.mode ? " (default)" : ""}</b><small>{mode.desc}</small></span>
+        </button>
+      ))}
+      <div className="fx-eyebrow" style={{ marginTop: 26 }}>Preview</div>
+      <p className="fx-sub">How a card looks with the option you picked. The table you play on is picked at random for every match.</p>
+      <div className="fx-panel" style={{ marginTop: 10, display: "flex", justifyContent: "center", padding: 22 }}><MiniCard cardId={sample.id} disabled={false} /></div>
+    </FxScreen>
+  );
+}
+
+// The whole menu shell for the two graphical styles. `a` is everything App already has.
+function FxApp({ a }) {
+  const display = useDisplay();
+  const pixel = display.mode === "pixel";
+  const s = a.screen;
+  const go = a.setScreen;
+  return (
+    <div className={"fx-menu fx-theme-" + (pixel ? "pixel" : "rust")}>
+      <style>{GLOBAL_STYLE}</style>
+      <style>{DELUXE_STYLE}</style>
+      <style>{MENU_STYLE}</style>
+      {pixel && <style>{PIXEL_STYLE}</style>}
+      {s !== "game" && <FxBackdrop />}
+      {s !== "game" && (
+        <div className="fx-wrap">
+          <div className="fx-top">
+            <h1 className="fx-brand"><DxTrefoil size={24} color="#e9944a" dark="#17110d" />Atomic <b>Bunch</b></h1>
+            <div className="fx-top-right">
+              <span><span className="fx-live" />{a.onlineCount === null ? "…" : a.onlineCount} online</span>
+              <span className="fx-chip">{a.profileLoading ? "…" : `${a.myProfile?.bullets || 0} Bullets`}</span>
+              <span>{a.myFirstName}</span>
+              <button className="fx-link" onClick={a.signOutUser}>Sign out</button>
+            </div>
+          </div>
+          {a.screenNotice && <div className="fx-notice">{a.screenNotice}</div>}
+          {a.profileSyncError && (
+            <div className="fx-notice">
+              Your last match result hasn't saved yet — please don't refresh or close the tab.
+              <button className="fx-btn fx-btn-sm" style={{ marginLeft: 12 }} onClick={a.retryProfileSync}>Retry now</button>
+            </div>
+          )}
+          {s === "select" && a.reconnectInfo && (
+            <div className="fx-notice fx-notice-ok">
+              You have an unfinished game as {a.reconnectInfo.hero}.
+              <button className="fx-btn fx-btn-sm fx-btn-primary" style={{ marginLeft: 12 }} onClick={a.reconnectToGame}>Reconnect</button>
+              <button className="fx-btn fx-btn-sm" style={{ marginLeft: 8 }} onClick={a.dismissReconnect}>Dismiss</button>
+            </div>
+          )}
+          {s === "select" && <FxHeroSelect onPick={a.startSearch} onBuildDeck={a.openDeckBuilder} onPlayCpu={a.startCpuMatch} onShowLeaderboard={() => go("leaderboard")} onShowQuests={() => go("quests")} onShowShop={() => go("shop")} onShowSettings={() => go("settings")} myProfile={a.myProfile} myLegendaryRank={a.myLegendaryRank} customDecks={a.customDecks} />}
+          {s === "settings" && <FxSettings onBack={() => go("select")} />}
+          {s === "leaderboard" && <FxLeaderboard onBack={() => go("select")} myProfile={a.myProfile} sessionId={a.sessionId} profileLoading={a.profileLoading} />}
+          {s === "quests" && <FxQuests onBack={() => go("select")} myProfile={a.myProfile} profileLoading={a.profileLoading} />}
+          {s === "shop" && <FxShop onBack={() => go("select")} myProfile={a.myProfile} user={a.user} onBuyUnlockAll={a.buyUnlockAll} onBuyHero={a.buyHeroUnlock} />}
+          {s === "deckbuilder" && <FxDeckBuilder hero={a.deckBuilderHero} initialDeck={a.customDecks[a.deckBuilderHero] || null} onSave={(deck) => a.saveCustomDeck(a.deckBuilderHero, deck)} onCancel={() => go("select")} myProfile={a.myProfile} onBuyCard={a.buyCardUnlock} />}
+          {s === "searching" && <FxSearching hero={a.hero} onCancel={a.cancelSearch} />}
+        </div>
+      )}
+      {s === "game" && a.gameState && <GameScreen state={a.gameState} myIdx={a.myIdx} onAction={a.handleAction} onConcede={a.concede} actionError={a.actionError} onSync={a.manualSync} onBackToMenu={a.returnToMenu} isCpuMatch={a.isCpuMatch} />}
+    </div>
+  );
+}
+
+/* ---------- Settings screen for the two notepad styles ---------- */
+function SettingsScreen({ onBack }) {
+  const display = useDisplay();
+  const sample = findCardByName("Albert Tesla") || CARD_DB[0];
+  const optionStyle = (active) => ({
+    display: "flex", gap: 10, alignItems: "flex-start", textAlign: "left", width: "100%", boxSizing: "border-box", padding: "10px 12px", marginTop: 8,
+    fontFamily: FONT, border: `2px solid ${active ? "#000" : "#999"}`, borderRadius: 6, background: active ? "#f3f3f3" : "#fff",
+    boxShadow: active ? "0 0 0 2px #000" : "none", cursor: "pointer", color: "#111",
+  });
+  return (
+    <div style={{ fontFamily: FONT, padding: "8px 20px 28px", maxWidth: 640, margin: "0 auto" }}>
+      <h2 style={{ fontSize: 18, borderBottom: "2px solid #000", paddingBottom: 6 }}>Settings</h2>
+      <div style={{ fontWeight: 700, fontSize: 14, marginTop: 12 }}>Display Options</div>
+      <div style={{ fontSize: 11, color: "#555", marginTop: 2 }}>Changes how the game looks on this device only. It never changes the rules, your cards or your rank.</div>
+      {DISPLAY_MODES.map((mode) => {
+        const active = display.mode === mode.id;
+        return (
+          <button key={mode.id} onClick={() => display.setDisplay({ mode: mode.id })} style={optionStyle(active)} aria-pressed={active}>
+            <span style={{ width: 16, height: 16, minWidth: 16, borderRadius: "50%", border: "2px solid #000", marginTop: 1, display: "flex", alignItems: "center", justifyContent: "center" }}>
+              {active && <span style={{ width: 8, height: 8, borderRadius: "50%", background: "#000" }} />}
+            </span>
+            <span>
+              <span style={{ display: "block", fontWeight: 700, fontSize: 13 }}>{mode.name}{mode.id === DEFAULT_DISPLAY.mode ? " (default)" : ""}</span>
+              <span style={{ display: "block", fontSize: 11, color: "#555", marginTop: 2 }}>{mode.desc}</span>
+            </span>
+          </button>
+        );
+      })}
+      <div style={{ marginTop: 16 }}>
+        <div style={{ fontWeight: 700, fontSize: 14 }}>Preview</div>
+        <div style={{ fontSize: 11, color: "#555", marginTop: 2 }}>How a card looks with the option you picked.</div>
+        <div style={{ marginTop: 8, display: "flex", justifyContent: "center", padding: 16, border: "1px dashed #999", borderRadius: 6, minHeight: 170 }}>
+          <MiniCard cardId={sample.id} disabled={false} />
+        </div>
+      </div>
+      <button onClick={onBack} style={{ marginTop: 18, padding: "10px 18px", fontFamily: FONT, fontSize: 13, fontWeight: 700, border: "2px solid #000", background: "#000", color: "#fff", cursor: "pointer", borderRadius: 4 }}>← Back</button>
+    </div>
   );
 }
 
@@ -2671,12 +4037,12 @@ function MiniCard({ cardId, onClick, disabled, small, allowDetail }) {
     setShowDetail(true);
   };
 
-  // Full Graphics: same clicks and long-press as below, drawn as a full-colour card.
-  if (displayMode === "deluxe") {
+  // Full Graphics / Pixel Art: same clicks and long-press as below, drawn as a full card face.
+  if (isThemedMode(displayMode)) {
     return (
       <>
         <div
-          className="dx-root"
+          className={dxRootClass(displayMode)}
           onClick={handleClick}
           onContextMenu={handleContextMenu}
           onMouseDown={startPress}
@@ -2685,7 +4051,7 @@ function MiniCard({ cardId, onClick, disabled, small, allowDetail }) {
           onTouchStart={startPress}
           onTouchEnd={cancelPress}
           onTouchMove={cancelPress}
-          style={{ cursor: disabled ? "default" : "pointer", padding: 6 }}
+          style={{ cursor: disabled ? "default" : "pointer", padding: 7 }}
           title={c.text || c.name}
         >
           <DeluxeCard card={c} scale={small ? 0.6 : 0.72} dim={disabled} tilt />
@@ -2754,7 +4120,7 @@ function cardLikeForMinion(m) {
 function CardDetailModal({ card, onClose }) {
   const r = RARITY_STYLE[card.rarity];
   const displayMode = useDisplay().mode;
-  if (displayMode === "deluxe") return <DeluxeCardDetail card={card} onClose={onClose} />;
+  if (isThemedMode(displayMode)) return <DeluxeCardDetail card={card} onClose={onClose} />;
   return (
     <div style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.45)", display: "flex", alignItems: "center", justifyContent: "center", zIndex: 100 }} onClick={onClose}>
       <div
@@ -2837,9 +4203,9 @@ function BoardMinion({ m, onClick, selected, targetable, isEnemy }) {
         </div>
         <CardArt card={m.cardId ? findCard(m.cardId) : { name: m.name, id: m.name }} size={46} />
         <div style={noArt ? { fontSize: 9.5, fontWeight: 700, textAlign: "center", marginTop: 6, lineHeight: 1.1, height: 44, overflow: "hidden", display: "flex", alignItems: "center", justifyContent: "center" } : { fontSize: 7, textAlign: "center", marginTop: 1, lineHeight: 1.05, height: 15, overflow: "hidden" }}>{m.name}</div>
-        {(m.frozen || m.keywords.includes("Toxic")) && (
+        {(isFrozenNow(m) || m.keywords.includes("Toxic")) && (
           <div style={{ display: "flex", flexDirection: "column", alignItems: "center", gap: 1, marginTop: 1 }}>
-            {m.frozen && <div style={{ fontSize: 6.5, lineHeight: 1, background: "#dbeeff", border: "1px solid #2a6ebb", padding: "0 3px", borderRadius: 3, whiteSpace: "nowrap" }}>FROZEN</div>}
+            {isFrozenNow(m) && <div style={{ fontSize: 6.5, lineHeight: 1, background: "#dbeeff", border: "1px solid #2a6ebb", padding: "0 3px", borderRadius: 3, whiteSpace: "nowrap" }}>FROZEN</div>}
             {m.keywords.includes("Toxic") && <div style={{ fontSize: 6.5, lineHeight: 1, background: "#39ff14", color: "#0a2e00", border: "1px solid #1a8a00", padding: "0 3px", borderRadius: 3, boxShadow: "0 0 4px rgba(57,255,20,0.8)", fontWeight: 700, whiteSpace: "nowrap" }}>TOXIC</div>}
           </div>
         )}
@@ -3420,7 +4786,7 @@ function ShopScreen({ onBack, myProfile, user, onBuyUnlockAll, onBuyHero }) {
   );
 }
 
-function RulesModal({ onClose }) {
+function RulesModal({ onClose, themed }) {
   const Section = ({ title, children }) => (
     <div style={{ marginBottom: 12 }}>
       <div style={{ fontWeight: 700, fontSize: 12, marginBottom: 3 }}>{title}</div>
@@ -3428,7 +4794,7 @@ function RulesModal({ onClose }) {
     </div>
   );
   return (
-    <div style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.55)", display: "flex", alignItems: "center", justifyContent: "center", zIndex: 300 }} onClick={onClose}>
+    <div className={themed ? "fx-rules" : undefined} style={{ position: "fixed", inset: 0, background: themed ? "rgba(6,5,4,0.8)" : "rgba(0,0,0,0.55)", display: "flex", alignItems: "center", justifyContent: "center", zIndex: 300 }} onClick={onClose}>
       <div onClick={(e) => e.stopPropagation()} style={{ background: "#fff", border: "3px solid #000", borderRadius: 10, padding: 22, textAlign: "left", maxWidth: 440, maxHeight: "80vh", overflowY: "auto" }}>
         <div style={{ fontWeight: 700, fontSize: 18, marginBottom: 12, borderBottom: "2px solid #000", paddingBottom: 8 }}>Rules</div>
 
@@ -3892,7 +5258,7 @@ function GameScreen({ state, myIdx, onAction, onConcede, actionError, onSync, on
     }
     if (!myTurn) return;
     if (!isEnemy) {
-      if (!m.canAttack) { flash(m.frozen ? `${m.name} is frozen and can't attack.` : `${m.name} can't play anymore this turn.`); return; }
+      if (!m.canAttack) { flash(isFrozenNow(m) ? `${m.name} is frozen and can't attack.` : `${m.name} can't play anymore this turn.`); return; }
       setAttacker(attacker === m.uid ? null : m.uid);
       return;
     }
@@ -3923,9 +5289,9 @@ function GameScreen({ state, myIdx, onAction, onConcede, actionError, onSync, on
     setPending(null);
   }
 
-  // Full Graphics draws this same match with its own layout. Every value and
-  // handler it needs is handed over here, so the rules live in one place.
-  if (display.mode === "deluxe") {
+  // Full Graphics and Pixel Art draw this same match with their own layout. Every value
+  // and handler they need is handed over here, so the rules live in one place.
+  if (isThemedMode(display.mode)) {
     return (
       <DeluxeGame g={{
         state, me, opp, myIdx, myTurn, pending, attacker, onAction, onConcede, onSync, onBackToMenu, isCpuMatch, actionError, notice, logRef,
@@ -4792,6 +6158,7 @@ export default function App() {
         removeDeadMinions(state);
         checkWin(state);
       } else if (action.type === "endTurn") {
+        me.board.forEach((m) => { if (m.frozenSkip) m.frozenSkip = false; }); // the missed turn is over - thaw
         state.turn = enemyIdx;
         startTurn(state);
       } else if (action.type === "afkTimeout") {
@@ -4899,9 +6266,17 @@ export default function App() {
 
   return (
     <DisplayContext.Provider value={displayValue}>
+    {isThemedMode(displaySettings.mode) ? (
+      /* Full Graphics / Pixel Art: their own menus and table, fed with exactly the same state and callbacks */
+      <FxApp a={{
+        screen, setScreen, myFirstName, signOutUser, profileLoading, myProfile, onlineCount, screenNotice, profileSyncError, retryProfileSync,
+        reconnectInfo, reconnectToGame, dismissReconnect, startSearch, openDeckBuilder, startCpuMatch, myLegendaryRank, customDecks, sessionId, user,
+        buyUnlockAll, buyHeroUnlock, deckBuilderHero, saveCustomDeck, buyCardUnlock, hero, cancelSearch,
+        gameState, myIdx, handleAction, concede, actionError, manualSync, returnToMenu, isCpuMatch,
+      }} />
+    ) : (
     <div style={{ minHeight: "100%", background: "#fff", color: "#111" }}>
       <style>{GLOBAL_STYLE}</style>
-      {displaySettings.mode === "deluxe" && <style>{DELUXE_STYLE}</style>}
       {screen !== "game" && (
         <div style={{ maxWidth: 640, margin: "0 auto", padding: "8px 20px 0", display: "flex", justifyContent: "space-between", alignItems: "center", fontFamily: FONT, gap: 8 }}>
           {screen === "select" ? (
@@ -4955,6 +6330,7 @@ export default function App() {
       {screen === "searching" && <SearchingScreen hero={hero} onCancel={cancelSearch} />}
       {screen === "game" && gameState && <GameScreen state={gameState} myIdx={myIdx} onAction={handleAction} onConcede={concede} actionError={actionError} onSync={manualSync} onBackToMenu={returnToMenu} isCpuMatch={isCpuMatch} />}
     </div>
+    )}
     </DisplayContext.Provider>
   );
 }
