@@ -1392,7 +1392,7 @@ const DELUXE_STYLE = `
 .dx-decal { position: absolute; transform: translate(-50%,-50%); animation: dxSplatIn 0.3s cubic-bezier(.2,1.5,.4,1) backwards, dxSplatOut 5s ease-in var(--life,20s) forwards; }
 @keyframes dxSplatIn { 0% { transform: translate(-50%,-50%) scale(0.12); opacity: 0; } 100% { transform: translate(-50%,-50%) scale(1); opacity: 1; } }
 @keyframes dxSplatOut { 100% { opacity: 0; } }
-.dx-droplet { position: absolute; left: 50%; top: 50%; width: 11px; height: 11px; border-radius: 50% 50% 50% 8%; background: radial-gradient(circle at 35% 30%,#f04a3a,#8a0a0a 60%,#4a0303); animation: dxDroplet 0.6s cubic-bezier(.15,.7,.45,1) forwards; }
+.dx-droplet { position: absolute; left: 50%; top: 50%; width: 11px; height: 11px; border-radius: 50%; background: radial-gradient(circle at 35% 30%,#a81a14,#560606 55%,#260202); box-shadow: 0 0 2px rgba(20,0,0,0.8); animation: dxDroplet 0.5s cubic-bezier(.15,.7,.45,1) forwards; }
 @keyframes dxDroplet { 0% { transform: translate(-50%,-50%) scale(1.3); opacity: 1; } 80% { opacity: 1; } 100% { transform: translate(calc(-50% + var(--bx)), calc(-50% + var(--by))) scale(0.35); opacity: 0; } }
 
 /* ---- frozen: a block of ice grows over the card ---- */
@@ -1405,7 +1405,15 @@ const DELUXE_STYLE = `
 .dx-frozen .dx-minion-art img, .dx-frozen .dx-minion-art canvas { filter: saturate(0.45) hue-rotate(165deg) brightness(1.08); }
 
 /* ---- toxic: green goo drips round the card and bubbles rise off it ---- */
-.dx-goo { position: absolute; inset: -9px -9px -16px -9px; pointer-events: none; z-index: 11; animation: dxGooIn 0.5s ease-out backwards; filter: drop-shadow(0 0 7px rgba(110,255,40,0.9)); }
+.dx-goo { position: absolute; inset: -9px -9px -16px -9px; pointer-events: none; z-index: 11; animation: dxGooIn 0.5s ease-out backwards; filter: drop-shadow(0 3px 3px rgba(0,0,0,0.65)); }
+.dx-gdrip { position: absolute; top: 7%; transform-origin: 50% 0%; animation: dxGDrip 5.5s ease-in-out infinite; }
+@keyframes dxGDrip { 0%,100% { transform: scaleY(0.25); } 60% { transform: scaleY(0.62); } 80% { transform: scaleY(0.56); } }
+.dx-gbubble { position: absolute; transform: translate(-50%,-50%) scale(0); animation: dxGBubble 3s ease-in infinite; }
+@keyframes dxGBubble { 0% { transform: translate(-50%,-50%) scale(0); opacity: 0; } 12% { opacity: 1; } 78% { transform: translate(-50%,-50%) scale(1); opacity: 1; } 84% { transform: translate(-50%,-50%) scale(1.35); opacity: 0.5; } 86%,100% { transform: translate(-50%,-50%) scale(1.4); opacity: 0; } }
+.dx-grise { position: absolute; top: 4%; width: 9px; height: 9px; opacity: 0; animation: dxGRise 4.2s ease-out infinite; }
+@keyframes dxGRise { 0% { transform: translate(-50%,0) scale(0.5); opacity: 0; } 15% { opacity: 0.85; } 100% { transform: translate(calc(-50% + 8px),-70px) scale(1.5); opacity: 0; } }
+.dx-fume { position: absolute; top: -6%; width: 34%; height: 26%; border-radius: 50%; background: radial-gradient(ellipse,rgba(150,170,60,0.34),rgba(150,170,60,0) 70%); opacity: 0; animation: dxFume 4.8s ease-out infinite; }
+@keyframes dxFume { 0% { transform: translateY(10px) scale(0.6); opacity: 0; } 25% { opacity: 1; } 100% { transform: translateY(-64px) scale(1.5); opacity: 0; } }
 @keyframes dxGooIn { 0% { opacity: 0; transform: scaleY(0.3) translateY(-30px); } 100% { opacity: 1; transform: none; } }
 .dx-drip { transform-box: fill-box; transform-origin: 50% 0%; animation: dxDrip 2.4s ease-in-out infinite; }
 @keyframes dxDrip { 0%,100% { transform: scaleY(0.55); } 55% { transform: scaleY(1.25); } 75% { transform: scaleY(1.05); } }
@@ -1415,7 +1423,7 @@ const DELUXE_STYLE = `
 .dx-toxic.dx-ready .dx-minion-frame { animation-name: dxReady; }
 .dx-toxic.dx-targetable .dx-minion-frame { animation-name: dxTarget; }
 .dx-selected.dx-toxic .dx-minion-frame { animation: none; }
-@keyframes dxToxicGlow { 0%,100% { box-shadow: 0 0 0 2px #4fbf1c, 0 0 12px 3px rgba(110,255,40,0.5), 0 8px 14px rgba(0,0,0,0.6); } 50% { box-shadow: 0 0 0 2px #b6ff3c, 0 0 24px 8px rgba(110,255,40,0.85), 0 8px 14px rgba(0,0,0,0.6); } }
+@keyframes dxToxicGlow { 0%,100% { box-shadow: 0 0 0 2px #56701a, 0 0 10px 2px rgba(140,165,40,0.35), 0 8px 14px rgba(0,0,0,0.6); } 50% { box-shadow: 0 0 0 2px #8ea82a, 0 0 18px 5px rgba(150,175,45,0.55), 0 8px 14px rgba(0,0,0,0.6); } }
 
 /* ---- shield bubble (Reinforced) ---- */
 .dx-shield { position: absolute; inset: -8px; border-radius: 22px; pointer-events: none; z-index: 10; border: 3px solid rgba(190,235,255,0.95);
@@ -2213,29 +2221,6 @@ function DxIceOverlay() {
     </svg>
   );
 }
-function DxGooOverlay() {
-  return (
-    <svg className="dx-goo" viewBox="0 0 168 215" preserveAspectRatio="none" style={{ overflow: "visible" }}>
-      <defs>
-        <linearGradient id="dxGoo" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stopColor="#d4ff5c" /><stop offset="0.5" stopColor="#74e01f" /><stop offset="1" stopColor="#2f9a0c" /></linearGradient>
-      </defs>
-      <path d="M4 12c0-7 6-10 14-10h132c8 0 14 3 14 10v14c-6 8-12-2-20 4s-12 10-22 4-14-6-22 0-16 8-24 2-14-8-22-2-14 6-22 0-12-2-28-4z" fill="url(#dxGoo)" stroke="#1d5f0a" strokeWidth="2" />
-      <path d="M4 22c7 10 8 30 4 54s4 40 2 62-2 40 0 58H2z" fill="url(#dxGoo)" stroke="#1d5f0a" strokeWidth="1.6" />
-      <path d="M164 22c-7 12-8 34-4 56s-4 36-2 60 2 40 0 58h8z" fill="url(#dxGoo)" stroke="#1d5f0a" strokeWidth="1.6" />
-      <path d="M2 196c14-8 26 4 40-2s24-6 40 0 26 4 42-2 26 2 42 4v12c-28 8-136 8-164 0z" fill="url(#dxGoo)" stroke="#1d5f0a" strokeWidth="1.8" />
-      {[[26, 30, 0], [58, 44, 0.7], [92, 26, 1.3], [120, 50, 0.3], [146, 34, 1.7]].map(([x, len, d], i) => (
-        <path key={i} className="dx-drip" style={{ animationDelay: `${d}s` }} d={`M${x - 6} 20q6 ${len * 0.5} 3 ${len * 0.75}a6.5 6.5 0 1 0 6 0q-3 -${len * 0.25} 3 -${len * 0.75}z`} fill="url(#dxGoo)" stroke="#1d5f0a" strokeWidth="1.6" />
-      ))}
-      <g fill="rgba(255,255,255,0.75)"><ellipse cx="34" cy="9" rx="13" ry="2.6" /><ellipse cx="104" cy="9" rx="20" ry="2.6" /><ellipse cx="60" cy="201" rx="16" ry="2.2" /></g>
-      {[[24, 5, 0], [52, 7, 0.8], [84, 4, 1.5], [112, 8, 0.4], [140, 5, 1.1], [68, 3.5, 1.9], [128, 4, 2.0]].map(([x, r, d], i) => (
-        <g key={"b" + i} className="dx-bubble" style={{ animationDelay: `${d}s`, animationDuration: `${1.9 + (i % 3) * 0.45}s` }}>
-          <circle cx={x} cy="198" r={r} fill="rgba(170,255,70,0.5)" stroke="#e0ffa0" strokeWidth="1.4" />
-          <circle cx={x - r * 0.3} cy={198 - r * 0.3} r={r * 0.25} fill="#fff" />
-        </g>
-      ))}
-    </svg>
-  );
-}
 // Pixel versions: the same two ideas built from square blocks on a 14 x 18 grid.
 const DX_PIX_ICE = (() => {
   const rnd = mulberry32(77), cells = [];
@@ -2282,84 +2267,181 @@ function DxGooOverlayPixel() {
 }
 
 /* ---------- blood ---------- */
-function dxSplatShapes(seed, kind) {
-  const rnd = mulberry32(seed);
-  const kill = kind === "kill";
-  const R = kill ? 58 + rnd() * 22 : 24 + rnd() * 11;
-  const closed = (pts) => {
-    const mid = (a, b) => [(a[0] + b[0]) / 2, (a[1] + b[1]) / 2];
-    let m = mid(pts[pts.length - 1], pts[0]);
-    let d = `M${m[0].toFixed(1)} ${m[1].toFixed(1)}`;
-    pts.forEach((p, i) => { const nx = mid(p, pts[(i + 1) % pts.length]); d += `Q${p[0].toFixed(1)} ${p[1].toFixed(1)} ${nx[0].toFixed(1)} ${nx[1].toFixed(1)}`; });
-    return d + "Z";
+/* ---------- wet-looking liquids for Full Graphics ----------
+   Blood and toxic goo are painted the same way: first a soft "how thick is
+   the liquid here" map is built from many overlapping blobs, then every pixel
+   is shaded from that thickness - thin edges are translucent with a dark dried
+   rim, thick parts are dark, and a light direction adds small wet highlights.
+   The result is a picture (made once and cached), not a flat vector shape. */
+function dxShadeLiquid(cv, o) {
+  const ctx = cv.getContext("2d");
+  const W = cv.width, H = cv.height;
+  const src = ctx.getImageData(0, 0, W, H).data;
+  const nz = dxValueNoise(o.seed || 1), nz2 = dxValueNoise((o.seed || 1) + 91);
+  const h = new Float32Array(W * H);
+  for (let y = 0; y < H; y++) for (let x = 0; x < W; x++) {
+    const v = src[(y * W + x) * 4] / 255 + (nz(x / 7, y / 7) - 0.5) * o.rough;
+    h[y * W + x] = v <= o.thr ? 0 : Math.min(1, (v - o.thr) / o.depth);
+  }
+  const out = ctx.createImageData(W, H);
+  const d = out.data;
+  const L = [-0.45, -0.62, 0.64];
+  for (let y = 0; y < H; y++) for (let x = 0; x < W; x++) {
+    const i = y * W + x, t = h[i];
+    if (t <= 0) continue;
+    const gx = (h[i + (x < W - 1 ? 1 : 0)] - h[i - (x > 0 ? 1 : 0)]) * o.bump;
+    const gy = (h[i + (y < H - 1 ? W : 0)] - h[i - (y > 0 ? W : 0)]) * o.bump;
+    const inv = 1 / Math.sqrt(gx * gx + gy * gy + 1);
+    const ndl = Math.max(0, (-gx * L[0] - gy * L[1] + L[2]) * inv);
+    const spec = Math.pow(ndl, o.shine) * (t > 0.06 ? 1 : 0) * o.gloss;
+    const rim = t < 0.16 ? 1 - o.rim * (1 - t / 0.16) : 1;           // darker, dried edge
+    const grit = nz2(x / 2.3, y / 2.3);
+    const dirt = grit > o.speck ? 0.7 : 0.9 + grit * 0.2;            // suspended grit / uneven pigment
+    const k = Math.pow(t, 0.8);
+    const p = i * 4;
+    for (let c = 0; c < 3; c++) {
+      const base = (o.thin[c] + (o.thick[c] - o.thin[c]) * k) * rim * dirt * (0.72 + ndl * 0.36);
+      d[p + c] = Math.max(0, Math.min(255, base + spec * o.glint[c]));
+    }
+    const edge = Math.min(1, t / 0.09);
+    d[p + 3] = Math.round(255 * edge * (o.alphaThin + (o.alphaThick - o.alphaThin) * k));
+  }
+  ctx.globalCompositeOperation = "source-over";
+  ctx.clearRect(0, 0, W, H);
+  ctx.putImageData(out, 0, 0);
+}
+function dxStamper(ctx) {
+  ctx.globalCompositeOperation = "lighter";
+  return (x, y, r, a = 1) => {
+    const g = ctx.createRadialGradient(x, y, 0, x, y, r);
+    g.addColorStop(0, `rgba(255,255,255,${a})`); g.addColorStop(0.5, `rgba(255,255,255,${a * 0.6})`); g.addColorStop(1, "rgba(255,255,255,0)");
+    ctx.fillStyle = g; ctx.beginPath(); ctx.arc(x, y, r, 0, 6.2832); ctx.fill();
   };
-  const n = 14, main = [];
-  for (let i = 0; i < n; i++) {
-    const a = (i / n) * Math.PI * 2;
-    let r = R * (0.62 + rnd() * 0.5);
-    if (rnd() > 0.78) r *= 1.5;
-    main.push([Math.cos(a) * r, Math.sin(a) * r * 0.82]);
-  }
-  const drops = [];
-  const dropCount = kill ? 14 + Math.floor(rnd() * 8) : 5 + Math.floor(rnd() * 4);
-  for (let i = 0; i < dropCount; i++) {
-    const a = rnd() * Math.PI * 2, dist = R * (1.1 + rnd() * (kill ? 1.9 : 1.4)), rr = R * (0.05 + rnd() * 0.15);
-    drops.push({ x: Math.cos(a) * dist, y: Math.sin(a) * dist * 0.82, r: rr, tail: rnd() > 0.45, a });
-  }
-  const streaks = [];
-  if (kill) for (let i = 0; i < 3 + Math.floor(rnd() * 3); i++) {
-    const a = rnd() * Math.PI * 2, len = R * (1.5 + rnd() * 1.1), wdt = R * (0.1 + rnd() * 0.08);
-    const ex = Math.cos(a) * len, ey = Math.sin(a) * len * 0.82, px = -Math.sin(a) * wdt, py = Math.cos(a) * wdt;
-    streaks.push(`M${px.toFixed(1)} ${py.toFixed(1)}Q${(ex * 0.5 + px * 1.6).toFixed(1)} ${(ey * 0.5 + py * 1.6).toFixed(1)} ${ex.toFixed(1)} ${ey.toFixed(1)}Q${(ex * 0.5 - px * 1.6).toFixed(1)} ${(ey * 0.5 - py * 1.6).toFixed(1)} ${(-px).toFixed(1)} ${(-py).toFixed(1)}Z`);
-  }
-  const guts = [], chunks = [];
-  if (kill) {
-    for (let g = 0; g < 2 + Math.floor(rnd() * 2); g++) {
-      let x = (rnd() - 0.5) * R * 0.9, y = (rnd() - 0.5) * R * 0.7, ang = rnd() * 6.283;
-      let d = `M${x.toFixed(1)} ${y.toFixed(1)}`;
-      for (let s = 0; s < 5; s++) {
-        ang += (rnd() - 0.5) * 2.6;
-        const cx = x + Math.cos(ang + 1.1) * 13, cy = y + Math.sin(ang + 1.1) * 13;
-        x += Math.cos(ang) * 15; y += Math.sin(ang) * 12;
-        d += `Q${cx.toFixed(1)} ${cy.toFixed(1)} ${x.toFixed(1)} ${y.toFixed(1)}`;
+}
+
+const DX_BLOOD = { thr: 0.4, depth: 0.5, rough: 0.2, bump: 7, shine: 34, gloss: 1, rim: 0.5, speck: 0.8, thin: [132, 14, 10], thick: [40, 3, 3], glint: [235, 200, 190], alphaThin: 0.8, alphaThick: 0.97 };
+function dxBloodURL(seed, kind) {
+  try {
+    const kill = kind === "kill";
+    const S = kill ? 340 : 160, c = S / 2;
+    const cv = document.createElement("canvas");
+    cv.width = S; cv.height = S;
+    const ctx = cv.getContext("2d");
+    ctx.fillStyle = "#000"; ctx.fillRect(0, 0, S, S);
+    const stamp = dxStamper(ctx);
+    const rnd = mulberry32(seed);
+    const R = S * (kill ? 0.15 : 0.16);
+    // the pool
+    for (let i = 0; i < (kill ? 10 : 5); i++) { const a = rnd() * 6.283, dd = rnd() * R * 0.95; stamp(c + Math.cos(a) * dd, c + Math.sin(a) * dd * 0.85, R * (0.55 + rnd() * 0.6), 0.9); }
+    // cast-off: long drops thrown outward, thin tail pointing back at the wound, heavy head
+    for (let i = 0; i < (kill ? 18 : 7); i++) {
+      const a = rnd() * 6.283, d0 = R * (0.8 + rnd() * 0.7), len = R * (0.5 + rnd() * (kill ? 2.1 : 1.3)), w = R * (0.05 + rnd() * 0.1);
+      const steps = Math.max(6, Math.floor(len / (w * 0.45)));
+      const bend = (rnd() - 0.5) * 0.25;
+      for (let s = 0; s <= steps; s++) { const t = s / steps, aa = a + bend * t; stamp(c + Math.cos(aa) * (d0 + len * t), c + Math.sin(aa) * (d0 + len * t) * 0.88, w * (0.5 + 1.5 * t * t) * 1.7, 0.7); }
+    }
+    // satellite drops and fine mist
+    for (let i = 0; i < (kill ? 46 : 16); i++) { const a = rnd() * 6.283, dd = R * (1.15 + Math.pow(rnd(), 0.7) * (kill ? 2.1 : 1.6)); stamp(c + Math.cos(a) * dd, c + Math.sin(a) * dd * 0.88, R * (0.04 + rnd() * rnd() * 0.16) * 1.7, 0.95); }
+    for (let i = 0; i < (kill ? 260 : 80); i++) { const a = rnd() * 6.283, dd = R * (0.8 + rnd() * 2.4); stamp(c + Math.cos(a) * dd, c + Math.sin(a) * dd * 0.88, 1.2 + rnd() * 2.2, 0.85); }
+    dxShadeLiquid(cv, { ...DX_BLOOD, seed: seed % 997 });
+    if (kill) {
+      // what's left of the minion: torn tissue and loops of gut, glazed with blood
+      ctx.lineCap = "round"; ctx.lineJoin = "round";
+      for (let g = 0; g < 2 + Math.floor(rnd() * 2); g++) {
+        let x = c + (rnd() - 0.5) * R * 1.3, y = c + (rnd() - 0.5) * R, ang = rnd() * 6.283;
+        const pts = [[x, y]];
+        for (let s = 0; s < 6; s++) { ang += (rnd() - 0.5) * 2.4; x += Math.cos(ang) * R * 0.34; y += Math.sin(ang) * R * 0.28; pts.push([x, y]); }
+        const w = R * (0.13 + rnd() * 0.06);
+        const path = (ox, oy) => { ctx.beginPath(); ctx.moveTo(pts[0][0] + ox, pts[0][1] + oy); for (let k = 1; k < pts.length - 1; k++) ctx.quadraticCurveTo(pts[k][0] + ox, pts[k][1] + oy, (pts[k][0] + pts[k + 1][0]) / 2 + ox, (pts[k][1] + pts[k + 1][1]) / 2 + oy); };
+        path(1.5, 2); ctx.strokeStyle = "rgba(14,2,2,0.85)"; ctx.lineWidth = w + 4; ctx.stroke();
+        path(0, 0); ctx.strokeStyle = "#5e2422"; ctx.lineWidth = w; ctx.stroke();
+        path(-w * 0.14, -w * 0.16); ctx.strokeStyle = "#8a4540"; ctx.lineWidth = w * 0.55; ctx.stroke();
+        path(-w * 0.24, -w * 0.28); ctx.strokeStyle = "rgba(240,205,195,0.42)"; ctx.lineWidth = w * 0.14; ctx.setLineDash([w * 0.9, w * 1.3]); ctx.stroke(); ctx.setLineDash([]);
+        path(0, 0); ctx.strokeStyle = "rgba(96,6,6,0.38)"; ctx.lineWidth = w; ctx.stroke();
       }
-      guts.push({ d, w: 6 + rnd() * 3 });
+      for (let k = 0; k < 5 + Math.floor(rnd() * 3); k++) {
+        const cx = c + (rnd() - 0.5) * R * 2.6, cy = c + (rnd() - 0.5) * R * 2, s = R * (0.07 + rnd() * 0.1), bone = rnd() > 0.78;
+        ctx.beginPath();
+        for (let q = 0; q < 6; q++) { const a = (q / 6) * 6.283 + rnd() * 0.8, rr = s * (0.6 + rnd() * 0.8); if (q) ctx.lineTo(cx + Math.cos(a) * rr, cy + Math.sin(a) * rr); else ctx.moveTo(cx + Math.cos(a) * rr, cy + Math.sin(a) * rr); }
+        ctx.closePath();
+        ctx.fillStyle = bone ? "#cfc2a8" : "#431010"; ctx.fill();
+        ctx.strokeStyle = "rgba(16,2,2,0.9)"; ctx.lineWidth = 1.2; ctx.stroke();
+        ctx.fillStyle = bone ? "rgba(120,10,10,0.45)" : "rgba(235,190,180,0.3)"; ctx.beginPath(); ctx.arc(cx - s * 0.2, cy - s * 0.2, s * 0.25, 0, 6.2832); ctx.fill();
+      }
     }
-    for (let c = 0; c < 4 + Math.floor(rnd() * 3); c++) {
-      const cx = (rnd() - 0.5) * R * 2.2, cy = (rnd() - 0.5) * R * 1.6, s = 3 + rnd() * 5, pts = [];
-      for (let k = 0; k < 5; k++) { const a = (k / 5) * 6.283 + rnd(); pts.push(`${(cx + Math.cos(a) * s * (0.6 + rnd() * 0.7)).toFixed(1)},${(cy + Math.sin(a) * s * (0.6 + rnd() * 0.7)).toFixed(1)}`); }
-      chunks.push({ pts: pts.join(" "), bone: rnd() > 0.72 });
-    }
-  }
-  return { R, main: closed(main), drops, streaks, guts, chunks };
+    return cv.toDataURL("image/png");
+  } catch (e) { return ""; }
 }
 function DxSplat({ seed, kind }) {
-  const sh = React.useMemo(() => dxSplatShapes(seed, kind), [seed, kind]);
-  const size = kind === "kill" ? 420 : 170;
-  const gid = "dxBl" + seed;
+  const url = React.useMemo(() => dxBloodURL(seed, kind), [seed, kind]);
+  const size = kind === "kill" ? 430 : 180;
+  return url ? <img src={url} alt="" draggable={false} style={{ display: "block", width: size, height: size }} /> : null;
+}
+
+/* toxic goo: one thick, murky coat of slime (made once), plus a few drips and bubbles that move */
+const DX_GOO = { thr: 0.42, depth: 0.5, rough: 0.16, bump: 8, shine: 26, gloss: 1.1, rim: 0.42, speck: 0.7, thin: [156, 168, 44], thick: [44, 66, 10], glint: [240, 250, 200], alphaThin: 0.58, alphaThick: 0.95 };
+const _dxGoo = {};
+function dxGooURL(kind) {
+  if (_dxGoo[kind] !== undefined) return _dxGoo[kind];
+  let url = "";
+  try {
+    const cv = document.createElement("canvas");
+    const rnd = mulberry32(kind === "coat" ? 611 : kind === "drip" ? 733 : 877);
+    if (kind === "coat") {
+      const W = 336, H = 430;
+      cv.width = W; cv.height = H;
+      const ctx = cv.getContext("2d");
+      ctx.fillStyle = "#000"; ctx.fillRect(0, 0, W, H);
+      const stamp = dxStamper(ctx);
+      for (let x = 10; x < W - 6; x += 9) stamp(x + (rnd() - 0.5) * 6, 20 + (rnd() - 0.5) * 12, 20 + rnd() * 12, 0.85);               // heavy lip along the top
+      [14, W - 14].forEach((sx) => { let y = 30; while (y < H - 30) { const run = 30 + rnd() * 90; for (let k = 0; k < run; k += 6) stamp(sx + (rnd() - 0.5) * 7, y + k, 9 + rnd() * 8, 0.8); y += run + rnd() * 34; } }); // runs down the sides
+      for (let x = 12; x < W - 8; x += 11) if (rnd() > 0.18) stamp(x + (rnd() - 0.5) * 8, H - 22 + (rnd() - 0.5) * 10, 13 + rnd() * 12, 0.85);  // puddle at the bottom
+      [[52, 70], [104, 128], [150, 46], [198, 150], [246, 84], [292, 110]].forEach(([dx, len]) => {                                 // strings of slime hanging off the lip
+        const steps = Math.floor(len / 5);
+        for (let s = 0; s <= steps; s++) { const t = s / steps; stamp(dx + Math.sin(t * 3 + dx) * 2, 34 + len * t, 13 * (1 - 0.62 * t), 0.8); }
+        stamp(dx, 34 + len, 13, 0.9); stamp(dx, 34 + len + 5, 9, 0.8);
+      });
+      dxShadeLiquid(cv, { ...DX_GOO, seed: 7 });
+    } else if (kind === "drip") {
+      const W = 60, H = 220;
+      cv.width = W; cv.height = H;
+      const ctx = cv.getContext("2d");
+      ctx.fillStyle = "#000"; ctx.fillRect(0, 0, W, H);
+      const stamp = dxStamper(ctx);
+      for (let s = 0; s <= 36; s++) { const t = s / 36; stamp(W / 2, 6 + 170 * t, 14 * (1 - 0.66 * t), 0.8); }
+      stamp(W / 2, 184, 17, 0.95); stamp(W / 2, 192, 12, 0.8);
+      dxShadeLiquid(cv, { ...DX_GOO, seed: 19 });
+    } else {
+      // a single slime bubble: thin skin, dark rim, one wet highlight
+      const S = 48;
+      cv.width = S; cv.height = S;
+      const ctx = cv.getContext("2d");
+      const g = ctx.createRadialGradient(S / 2, S / 2, S * 0.1, S / 2, S / 2, S * 0.46);
+      g.addColorStop(0, "rgba(170,190,60,0.10)"); g.addColorStop(0.72, "rgba(120,150,30,0.28)"); g.addColorStop(0.9, "rgba(50,74,10,0.85)"); g.addColorStop(1, "rgba(30,46,6,0)");
+      ctx.fillStyle = g; ctx.beginPath(); ctx.arc(S / 2, S / 2, S * 0.47, 0, 6.2832); ctx.fill();
+      const hl = ctx.createRadialGradient(S * 0.36, S * 0.32, 0, S * 0.36, S * 0.32, S * 0.16);
+      hl.addColorStop(0, "rgba(250,255,225,0.95)"); hl.addColorStop(1, "rgba(250,255,225,0)");
+      ctx.fillStyle = hl; ctx.beginPath(); ctx.arc(S * 0.36, S * 0.32, S * 0.16, 0, 6.2832); ctx.fill();
+      ctx.strokeStyle = "rgba(225,240,170,0.35)"; ctx.lineWidth = 1.5; ctx.beginPath(); ctx.arc(S / 2, S / 2, S * 0.36, 0.5, 1.5); ctx.stroke();
+    }
+    url = cv.toDataURL("image/png");
+  } catch (e) { url = ""; }
+  _dxGoo[kind] = url;
+  return url;
+}
+function DxGooOverlay() {
+  const coat = dxGooURL("coat"), drip = dxGooURL("drip"), bub = dxGooURL("bubble");
+  if (!coat) return null;
   return (
-    <svg viewBox={`${-size / 2} ${-size / 2} ${size} ${size}`} width={size} height={size} style={{ display: "block", overflow: "visible" }}>
-      <defs>
-        <radialGradient id={gid}><stop offset="0" stopColor="#3a0303" /><stop offset="0.55" stopColor="#780909" /><stop offset="1" stopColor="#a51212" /></radialGradient>
-      </defs>
-      <g fill={`url(#${gid})`} stroke="#2a0202" strokeOpacity="0.55" strokeWidth="1" opacity="0.94">
-        {sh.streaks.map((d, i) => <path key={"s" + i} d={d} />)}
-        {sh.drops.map((dr, i) => (
-          <g key={"d" + i}>
-            {dr.tail && <path d={`M${(dr.x * 0.5).toFixed(1)} ${(dr.y * 0.5).toFixed(1)}L${dr.x.toFixed(1)} ${dr.y.toFixed(1)}`} stroke="#7a0909" strokeOpacity="0.9" strokeWidth={Math.max(1, dr.r * 0.8)} strokeLinecap="round" />}
-            <ellipse cx={dr.x} cy={dr.y} rx={dr.r * 1.15} ry={dr.r} transform={`rotate(${(dr.a * 180) / Math.PI} ${dr.x} ${dr.y})`} />
-          </g>
-        ))}
-        <path d={sh.main} />
-      </g>
-      <g fill="rgba(255,255,255,0.2)"><ellipse cx={-sh.R * 0.25} cy={-sh.R * 0.3} rx={sh.R * 0.22} ry={sh.R * 0.08} transform="rotate(-20)" /><ellipse cx={sh.R * 0.3} cy={sh.R * 0.1} rx={sh.R * 0.12} ry={sh.R * 0.05} /></g>
-      {sh.guts.map((g, i) => (
-        <g key={"g" + i} fill="none" strokeLinecap="round" strokeLinejoin="round">
-          <path d={g.d} stroke="#4a1010" strokeWidth={g.w + 3} /><path d={g.d} stroke="#c2706c" strokeWidth={g.w} /><path d={g.d} stroke="#efb4aa" strokeWidth={g.w * 0.28} strokeDasharray="5 7" />
-        </g>
+    <div className="dx-goo">
+      <div className="dx-fume" style={{ left: "8%", animationDelay: "0s" }} /><div className="dx-fume" style={{ left: "46%", animationDelay: "1.6s" }} /><div className="dx-fume" style={{ left: "70%", animationDelay: "3.1s" }} />
+      <img src={coat} alt="" draggable={false} style={{ position: "absolute", inset: 0, width: "100%", height: "100%" }} />
+      {[[20, 0.2, 0.34], [57, 1.4, 0.26], [82, 2.5, 0.3]].map(([x, d, w], i) => <img key={i} className="dx-gdrip" src={drip} alt="" draggable={false} style={{ left: `${x}%`, width: `${w * 30}%`, animationDelay: `${d}s` }} />)}
+      {[[12, 4, 0, 13], [36, 7, 1.3, 9], [63, 3, 2.2, 15], [86, 8, 0.7, 10], [24, 93, 1.8, 12], [70, 94, 2.9, 14], [50, 92, 0.4, 8]].map(([x, y, d, s], i) => (
+        <img key={"b" + i} className="dx-gbubble" src={bub} alt="" draggable={false} style={{ left: `${x}%`, top: `${y}%`, width: s, height: s, animationDelay: `${d}s`, animationDuration: `${2.6 + (i % 3) * 0.7}s` }} />
       ))}
-      {sh.chunks.map((c, i) => <polygon key={"c" + i} points={c.pts} fill={c.bone ? "#e8dcc8" : "#6b0f14"} stroke="#2a0202" strokeWidth="1" />)}
-    </svg>
+      {[[30, 0.5], [58, 2.1], [78, 3.4]].map(([x, d], i) => <img key={"r" + i} className="dx-grise" src={bub} alt="" draggable={false} style={{ left: `${x}%`, animationDelay: `${d}s` }} />)}
+    </div>
   );
 }
 function dxPixelSplatURL(seed, kind) {
@@ -2702,8 +2784,8 @@ function DxHeroPlate({ player, side, u, wide, portraitSize = 92, targetable, att
         {player.armor > 0 && <div className="dx-badge dx-badge-armor" style={{ left: -10 * u, bottom: -10 * u, width: 42 * u, height: (pixel ? 42 : 48) * u, fontSize: (pixel ? 16 : 23) * u }} title="Armor">{player.armor}</div>}
       </div>
       <div style={{ flex: 1, minWidth: 0 }}>
-        <div className="dx-display" style={{ fontWeight: 800, color: "#fff", lineHeight: 1.05 }}>
-          <MarqueeText text={player.displayName || player.hero} width="100%" fontSize={fs(21)} bold color="#fff" duration={7} />
+        <div className="dx-display" style={{ fontWeight: 800, color: "#fff", lineHeight: 1.15 }}>
+          <MarqueeText text={player.displayName || player.hero} width="100%" fontSize={fs(17)} bold color="#fff" duration={7} />
         </div>
         <div className="dx-display" style={{ fontSize: fs(12.5), fontWeight: 700, color: fac.c, letterSpacing: "0.14em", whiteSpace: "nowrap" }}>{player.hero}</div>
         <div style={{ height: 7 * u, borderRadius: 4 * u * rad, background: "#3a0d09", border: "1px solid #000", overflow: "hidden", marginTop: 3 * u }}>
@@ -3169,7 +3251,7 @@ function DeluxeGame({ g }) {
     body = (
       <div style={{ position: "absolute", inset: 0, padding: pad, display: "flex", flexDirection: "column", gap }}>
         <div style={{ height: barH, flexShrink: 0 }}>
-          <DxHeroPlate player={opp} side="opp" u={1.3} portraitSize={82} wide pixel={pixel} targetable={oppHeroTargetable} attackable={g.canAttackEnemyHero} onClick={() => g.handleHeroClick(true, oppIdx)}>
+          <DxHeroPlate player={opp} side="opp" u={1.14} portraitSize={94} wide pixel={pixel} targetable={oppHeroTargetable} attackable={g.canAttackEnemyHero} onClick={() => g.handleHeroClick(true, oppIdx)}>
             <div style={{ display: "flex", flexDirection: "column", alignItems: "flex-end", gap: 8, flexShrink: 0 }} onClick={(e) => e.stopPropagation()}>
               {menuBtn({ fontSize: 22 })}
               <div style={{ display: "flex", alignItems: "center", gap: 6, fontSize: 20, fontWeight: 700 }}><DeluxeCardBack w={30} />× {opp.hand.length}</div>
@@ -3190,7 +3272,7 @@ function DeluxeGame({ g }) {
         </div>
         <div style={{ height: barH, flexShrink: 0, display: "flex", gap: 10 }}>
           <div style={{ flex: 1, minWidth: 0 }}>
-            <DxHeroPlate player={me} side="me" u={1.3} portraitSize={82} pixel={pixel} targetable={pending && pending.needsTarget === "any"} onClick={() => g.handleHeroClick(false, myIdx)} />
+            <DxHeroPlate player={me} side="me" u={1.14} portraitSize={94} pixel={pixel} targetable={pending && pending.needsTarget === "any"} onClick={() => g.handleHeroClick(false, myIdx)} />
           </div>
           {powerBtn({ width: 268, flexShrink: 0 })}
         </div>
