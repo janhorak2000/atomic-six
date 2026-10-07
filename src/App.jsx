@@ -1,4 +1,5 @@
 import React, { useState, useEffect, useRef, useCallback } from "react";
+import { createPortal } from "react-dom";
 import { auth, db, functions, signInWithGoogle, signOutUser } from "./firebase.js";
 import { onAuthStateChanged } from "firebase/auth";
 import {
@@ -264,13 +265,16 @@ function textureCanvas(canvas, seed, iconKey) {
 function CardArt({ card, size = 34 }) {
   const canvasRef = useRef(null);
   const override = CARD_ART_OVERRIDES[card.name];
+  const noArt = useDisplay().mode === "noart";
   useEffect(() => {
     if (override || !canvasRef.current) return;
     const keys = Object.keys(ICON_PATHS);
     const iconKey = keys[hash(card.name) % keys.length];
     textureCanvas(canvasRef.current, hash(card.id || card.name), iconKey);
-  }, [card.name, card.id, override]);
+  }, [card.name, card.id, override, noArt]);
 
+  // "Notepad Style without Arts": no picture at all, just the card shape.
+  if (noArt) return null;
   if (override) {
     return <img src={override} alt={card.name} style={{ width: size, height: size, objectFit: "cover", border: "1px solid #ccc", borderRadius: 3 }} />;
   }
@@ -1198,6 +1202,1439 @@ function WrapFitText({ text, width, height, maxFontSize, minFontSize = 5.5, dura
   );
 }
 
+/* =========================================================================
+   DISPLAY SETTINGS — three ways to draw the same game.
+     "notepad" : the original black & white notepad look, with card art.
+     "noart"   : the notepad look with every picture removed (cards are
+                 plain shapes with text) and no win/lose clip at match end.
+     "deluxe"  : "Full Graphics" - colourful card faces, 3D animations,
+                 ice / toxic effects and an illustrated board.
+   The choice is purely visual and is remembered per browser/device in
+   localStorage. It is deliberately NOT saved to the player's Firestore
+   profile: firestore.rules only lets the client write `lastSeen`, and a
+   display preference isn't worth a Cloud Function. Nothing in the rules
+   of the game, the match data or the server functions depends on it.
+   ========================================================================= */
+const DISPLAY_MODES = [
+  { id: "notepad", name: "Notepad Style with Arts", desc: "The classic black & white notepad look, with card pictures." },
+  { id: "noart", name: "Notepad Style without Arts", desc: "Card shapes and text only. No pictures, and no win animation at the end of a match." },
+  { id: "deluxe", name: "Full Graphics", desc: "Colourful cards, big art, 3D animations, ice and toxic effects, and illustrated boards." },
+];
+const BOARD_STYLES = [
+  { id: "rustyard", name: "Rust Yard", desc: "Riveted scrap plates, eaten by rust.", accent: "#e8873a" },
+  { id: "bunker", name: "Bunker Floor", desc: "Cold concrete and hazard stripes.", accent: "#e6c229" },
+  { id: "swamp", name: "Toxic Swamp", desc: "Glowing sludge and dead roots.", accent: "#8dff4a" },
+  { id: "highway", name: "Scorched Highway", desc: "Cracked asphalt under a burning sky.", accent: "#ff7a3d" },
+  { id: "reactor", name: "Reactor Core", desc: "Dark steel lit by a leaking reactor.", accent: "#3fe0ff" },
+  { id: "dustbowl", name: "Dust Bowl", desc: "Sun-bleached, cracked earth.", accent: "#ffd08a" },
+];
+const DISPLAY_STORAGE_KEY = "atomicBunch.display.v1";
+const DEFAULT_DISPLAY = { mode: "notepad", board: "rustyard" };
+function loadDisplaySettings() {
+  try {
+    const raw = window.localStorage.getItem(DISPLAY_STORAGE_KEY);
+    if (!raw) return { ...DEFAULT_DISPLAY };
+    const p = JSON.parse(raw) || {};
+    return {
+      mode: DISPLAY_MODES.some((m) => m.id === p.mode) ? p.mode : DEFAULT_DISPLAY.mode,
+      board: BOARD_STYLES.some((b) => b.id === p.board) ? p.board : DEFAULT_DISPLAY.board,
+    };
+  } catch (e) {
+    return { ...DEFAULT_DISPLAY };
+  }
+}
+function saveDisplaySettings(s) {
+  try { window.localStorage.setItem(DISPLAY_STORAGE_KEY, JSON.stringify({ mode: s.mode, board: s.board })); } catch (e) {}
+}
+const DisplayContext = React.createContext({ ...DEFAULT_DISPLAY, setDisplay: () => {} });
+function useDisplay() { return React.useContext(DisplayContext); }
+
+/* =========================================================================
+   FULL GRAPHICS ("deluxe") — look & feel
+   Everything below is drawn with CSS and inline SVG only: no extra image
+   files, no web fonts and no network requests, so App.jsx stays the single
+   file to upload. Class names all start with "dx-".
+   ========================================================================= */
+const DX_FONT = `"Segoe UI", system-ui, -apple-system, "Roboto", "Helvetica Neue", Arial, sans-serif`;
+const DX_DISPLAY_FONT = `"Bahnschrift", "DIN Alternate", "Avenir Next Condensed", "Roboto Condensed", "Arial Narrow", "Segoe UI", system-ui, sans-serif`;
+
+const DX_RARITY = {
+  common: { frame: "linear-gradient(155deg,#c3c7ce 0%,#787d86 34%,#3d4148 68%,#959aa3 100%)", edge: "#d5d9df", glow: "rgba(200,205,215,0.55)", gem: "#c9ced6", label: "Common" },
+  rare: { frame: "linear-gradient(155deg,#9fcbff 0%,#2f6fe0 34%,#12327d 68%,#5d9bf5 100%)", edge: "#a9d0ff", glow: "rgba(70,140,255,0.75)", gem: "#4b93ff", label: "Rare" },
+  epic: { frame: "linear-gradient(155deg,#e2b3ff 0%,#9440e0 34%,#431378 68%,#b56df5 100%)", edge: "#e3bdff", glow: "rgba(170,80,255,0.75)", gem: "#b45cff", label: "Epic" },
+  unique: { frame: "linear-gradient(155deg,#fff3b5 0%,#e8b02c 34%,#8a5a0a 68%,#ffd75e 100%)", edge: "#fff2b8", glow: "rgba(255,200,60,0.85)", gem: "#ffc93c", label: "Unique" },
+};
+const DX_FACTION = {
+  Wanderer: { c: "#e89c4c", dark: "#3d2512" },
+  Prepper: { c: "#a08cec", dark: "#231b40" },
+  Mutant: { c: "#73d45d", dark: "#15301a" },
+  Scientist: { c: "#5cb8f4", dark: "#11283c" },
+  Bandit: { c: "#ec655f", dark: "#3d1514" },
+  Cyborg: { c: "#48dacb", dark: "#0e302e" },
+  neutral: { c: "#bcae8e", dark: "#2c281f" },
+};
+function dxFaction(hero) { return DX_FACTION[hero] || DX_FACTION.neutral; }
+
+const DX_KEYWORD_ICONS = {
+  Charge: { d: "M13 2L4 14h6l-1 8 9-12h-6l1-8z", bg: "#f5b921", fg: "#3a2500", tip: "Charge: can attack right away" },
+  Deathtouch: { d: ICON_PATHS.skull, bg: "#2a2a2e", fg: "#f2f2f2", tip: "Deathtouch: destroys any minion it damages" },
+  ToxicTouch: { d: "M12 2c4 5 6 8 6 11a6 6 0 11-12 0c0-3 2-6 6-11z", bg: "#59d92b", fg: "#0c2a00", tip: "Toxic Touch: makes minions it fights Toxic" },
+  Merchant: { d: "M3 8l9-4 9 4-9 4-9-4zm0 0v9l9 4 9-4V8", bg: "#c9a66b", fg: "#2b1c05", tip: "Merchant" },
+};
+
+const DELUXE_STYLE = `
+.dx-root, .dx-root * { box-sizing: border-box; }
+.dx-root { font-family: ${DX_FONT}; color: #f3efe6; -webkit-tap-highlight-color: transparent; user-select: none; -webkit-user-select: none; touch-action: manipulation; }
+.dx-display { font-family: ${DX_DISPLAY_FONT}; font-stretch: condensed; letter-spacing: 0.04em; text-transform: uppercase; }
+.dx-btn { font-family: ${DX_DISPLAY_FONT}; font-stretch: condensed; text-transform: uppercase; letter-spacing: 0.06em; font-weight: 700; color: #f6f1e4; cursor: pointer;
+  border: 2px solid #0c0c0d; border-radius: 10px; padding: 0.55em 1.1em;
+  background: linear-gradient(180deg,#5b5f66 0%,#35383d 55%,#232528 100%);
+  box-shadow: inset 0 1px 0 rgba(255,255,255,0.28), inset 0 -3px 0 rgba(0,0,0,0.35), 0 4px 0 #0a0a0b, 0 8px 14px rgba(0,0,0,0.45);
+  transition: transform 0.08s, filter 0.15s; }
+.dx-btn:active:not(:disabled) { transform: translateY(3px); box-shadow: inset 0 1px 0 rgba(255,255,255,0.2), 0 1px 0 #0a0a0b; }
+.dx-btn:disabled { cursor: default; filter: grayscale(0.7) brightness(0.7); }
+.dx-btn-go { background: linear-gradient(180deg,#ffd75e 0%,#e88f1c 55%,#a14c06 100%); color: #2a1300; text-shadow: 0 1px 0 rgba(255,255,255,0.35); }
+.dx-btn-danger { background: linear-gradient(180deg,#f0655a 0%,#b72a20 55%,#6e120c 100%); }
+.dx-panel { background: linear-gradient(180deg,rgba(38,36,34,0.94),rgba(18,17,16,0.96)); border: 2px solid #0b0b0b; border-radius: 14px;
+  box-shadow: inset 0 0 0 1px rgba(255,255,255,0.09), inset 0 1px 0 rgba(255,255,255,0.18), 0 10px 26px rgba(0,0,0,0.55); }
+
+/* ---- card face ---- */
+.dx-card { position: relative; transform-style: preserve-3d; transition: transform 0.12s ease-out, filter 0.2s; transform: perspective(900px) rotateX(var(--dx-rx,0deg)) rotateY(var(--dx-ry,0deg)); }
+.dx-card-frame { position: absolute; inset: 0; border-radius: 16px; padding: 8px; box-shadow: 0 1px 0 rgba(255,255,255,0.5) inset, 0 -2px 0 rgba(0,0,0,0.4) inset, 0 10px 22px rgba(0,0,0,0.55), 0 2px 4px rgba(0,0,0,0.5); }
+.dx-card-glare { position: absolute; inset: 0; border-radius: 16px; pointer-events: none; opacity: var(--dx-glare,0); transition: opacity 0.2s;
+  background: radial-gradient(circle at var(--dx-gx,50%) var(--dx-gy,30%), rgba(255,255,255,0.42), rgba(255,255,255,0) 55%); mix-blend-mode: screen; }
+.dx-card-dim { filter: brightness(0.62) saturate(0.55); }
+.dx-badge { position: absolute; display: flex; align-items: center; justify-content: center; font-family: ${DX_DISPLAY_FONT}; font-weight: 800; color: #fff; text-shadow: 0 2px 0 rgba(0,0,0,0.65), 0 0 6px rgba(0,0,0,0.6); }
+.dx-badge-cost { border-radius: 50%; border: 3px solid #05301a; background: radial-gradient(circle at 34% 28%,#d6ffe3 0%,#3be07a 38%,#0d7a38 78%,#064a21 100%); box-shadow: 0 0 12px rgba(70,255,140,0.7), 0 3px 5px rgba(0,0,0,0.6); }
+.dx-badge-atk { border-radius: 50%; border: 3px solid #4a2600; background: radial-gradient(circle at 34% 28%,#fff3c2 0%,#ffb31f 40%,#c96a00 80%,#7a3d00 100%); box-shadow: 0 3px 5px rgba(0,0,0,0.6); }
+.dx-badge-hp { border-radius: 50% 50% 50% 50% / 38% 38% 62% 62%; border: 3px solid #4d0a06; background: radial-gradient(circle at 34% 28%,#ffd0c9 0%,#ef3b2c 40%,#a3150b 80%,#5e0803 100%); box-shadow: 0 3px 5px rgba(0,0,0,0.6); }
+
+/* ---- hand ---- */
+.dx-handcard { position: absolute; bottom: 0; transform-origin: 50% 100%; transform: translateY(var(--ty,0px)) rotate(var(--rot,0deg)); transition: transform 0.18s cubic-bezier(.2,.8,.2,1), left 0.25s; animation: dxDraw 0.5s cubic-bezier(.2,.8,.2,1) backwards; cursor: pointer; }
+@media (hover: hover) { .dx-handcard:hover { transform: translateY(var(--lift,-60px)) scale(var(--hs,1.25)) rotate(0deg); z-index: 80 !important; } }
+.dx-playable .dx-card-frame { animation: dxPlayable 1.5s ease-in-out infinite; }
+@keyframes dxPlayable { 0%,100% { box-shadow: 0 0 0 3px #7dff9a, 0 0 14px 3px rgba(80,255,130,0.55), 0 10px 22px rgba(0,0,0,0.55); } 50% { box-shadow: 0 0 0 3px #c9ffd6, 0 0 26px 8px rgba(80,255,130,0.85), 0 10px 22px rgba(0,0,0,0.55); } }
+@keyframes dxDraw { 0% { opacity: 0; transform: translate(260px,-120px) rotateY(85deg) rotate(18deg) scale(0.7); } 100% { opacity: 1; } }
+
+/* ---- board minions ---- */
+.dx-slot { position: relative; flex-shrink: 0; transition: width 0.25s, height 0.25s; }
+.dx-minion { position: absolute; left: 0; top: 0; transform-origin: 0 0; }
+.dx-minion-body { position: absolute; inset: 0; transform-style: preserve-3d; transition: transform 0.18s cubic-bezier(.2,.8,.2,1), filter 0.25s; animation: dxSummon 0.55s cubic-bezier(.2,.9,.25,1) backwards; }
+.dx-minion-frame { position: absolute; inset: 0; border-radius: 13px; padding: 5px; box-shadow: 0 1px 0 rgba(255,255,255,0.55) inset, 0 8px 14px rgba(0,0,0,0.6), 0 2px 3px rgba(0,0,0,0.6); }
+.dx-minion-taunt .dx-minion-frame { box-shadow: 0 0 0 4px #aeb6c0, 0 0 0 7px #23272c, 0 0 0 8px rgba(255,255,255,0.25), 0 10px 16px rgba(0,0,0,0.65); border-radius: 13px 13px 30px 30px; }
+.dx-minion-taunt .dx-minion-art { border-radius: 9px 9px 25px 25px; }
+.dx-minion-art { position: absolute; inset: 5px; border-radius: 9px; overflow: hidden; background: #111; }
+.dx-minion-art::after { content: ""; position: absolute; inset: 0; background: linear-gradient(180deg,rgba(0,0,0,0) 45%,rgba(0,0,0,0.88) 100%); box-shadow: inset 0 0 0 2px rgba(0,0,0,0.55), inset 0 0 18px rgba(0,0,0,0.55); }
+.dx-spent .dx-minion-body { filter: saturate(0.45) brightness(0.72); }
+.dx-ready .dx-minion-frame { animation: dxReady 1.4s ease-in-out infinite; }
+.dx-selected .dx-minion-body { transform: translateY(-16px) translateZ(60px) scale(1.1); }
+.dx-selected .dx-minion-frame { box-shadow: 0 0 0 4px #ffe27a, 0 0 28px 10px rgba(255,210,70,0.9), 0 26px 26px rgba(0,0,0,0.55); animation: none; }
+.dx-targetable .dx-minion-frame, .dx-hero-targetable { animation: dxTarget 0.9s ease-in-out infinite; }
+.dx-minion-hit { position: absolute; inset: 0; transform-style: preserve-3d; }
+.dx-hit .dx-minion-hit, .dx-hero-hit { animation: dxHit 0.45s; }
+@keyframes dxReady { 0%,100% { box-shadow: 0 0 0 2px #7dff9a, 0 0 10px 2px rgba(80,255,130,0.5), 0 8px 14px rgba(0,0,0,0.6); } 50% { box-shadow: 0 0 0 3px #c9ffd6, 0 0 20px 6px rgba(80,255,130,0.85), 0 8px 14px rgba(0,0,0,0.6); } }
+@keyframes dxTarget { 0%,100% { box-shadow: 0 0 0 3px #ff5a48, 0 0 10px 2px rgba(255,70,50,0.6), 0 8px 14px rgba(0,0,0,0.6); } 50% { box-shadow: 0 0 0 5px #ffb0a6, 0 0 24px 8px rgba(255,70,50,0.95), 0 8px 14px rgba(0,0,0,0.6); } }
+@keyframes dxSummon { 0% { opacity: 0; transform: translateY(-90px) translateZ(260px) rotateX(62deg) scale(1.35); } 62% { opacity: 1; transform: translateY(6px) rotateX(-8deg) scale(0.96); } 80% { transform: translateY(-4px) rotateX(3deg) scale(1.02); } 100% { transform: none; } }
+@keyframes dxHit { 0% { transform: translate(0,0) rotate(0); filter: brightness(2.4) saturate(0.3); } 20% { transform: translate(-9px,3px) rotate(-3deg); } 40% { transform: translate(8px,-3px) rotate(3deg); filter: brightness(1.4); } 60% { transform: translate(-5px,2px) rotate(-1.5deg); } 80% { transform: translate(3px,0) rotate(1deg); } 100% { transform: none; filter: none; } }
+.dx-impact::after { content: ""; position: absolute; left: 50%; top: 50%; width: 10px; height: 10px; border-radius: 50%; pointer-events: none; z-index: 30;
+  background: radial-gradient(circle,#fff 0%,#ffe9a0 30%,rgba(255,150,40,0.7) 55%,rgba(255,90,20,0) 72%); animation: dxImpact 0.42s ease-out forwards; }
+@keyframes dxImpact { 0% { transform: translate(-50%,-50%) scale(1); opacity: 1; } 100% { transform: translate(-50%,-50%) scale(26); opacity: 0; } }
+.dx-floater { position: absolute; left: 50%; top: 30%; z-index: 40; pointer-events: none; font-family: ${DX_DISPLAY_FONT}; font-weight: 900; white-space: nowrap;
+  text-shadow: 0 3px 0 #000, 0 0 10px rgba(0,0,0,0.9), 2px 0 0 #000, -2px 0 0 #000; animation: dxFloat 1.05s cubic-bezier(.2,.8,.3,1) forwards; }
+@keyframes dxFloat { 0% { transform: translate(-50%,10px) scale(0.3); opacity: 0; } 18% { transform: translate(-50%,-14px) scale(1.35); opacity: 1; } 70% { transform: translate(-50%,-46px) scale(1); opacity: 1; } 100% { transform: translate(-50%,-78px) scale(0.9); opacity: 0; } }
+
+/* ---- death: the card cracks into four shards that tumble away ---- */
+.dx-dying { pointer-events: none; }
+.dx-shard { position: absolute; inset: 0; animation: dxShard 0.95s cubic-bezier(.45,0,.8,.6) forwards; transform-style: preserve-3d; }
+@keyframes dxShard { 0% { transform: translate3d(0,0,0) rotate(0); opacity: 1; filter: brightness(2.6) saturate(0.2); }
+  12% { transform: translate3d(calc(var(--sx) * 0.06), calc(var(--sy) * 0.06), 0) rotate(calc(var(--sr) * 0.05)); filter: brightness(1.3); opacity: 1; }
+  100% { transform: translate3d(var(--sx), calc(var(--sy) + 150px), 120px) rotate(var(--sr)) rotateX(var(--srx)) rotateY(var(--sry)) scale(0.72); opacity: 0; filter: brightness(0.5) grayscale(0.8); } }
+.dx-death-flash { position: absolute; inset: -30%; border-radius: 50%; background: radial-gradient(circle,rgba(255,255,255,0.95) 0%,rgba(255,200,120,0.6) 35%,rgba(255,90,20,0) 68%); animation: dxDeathFlash 0.5s ease-out forwards; }
+@keyframes dxDeathFlash { 0% { transform: scale(0.2); opacity: 1; } 100% { transform: scale(1.5); opacity: 0; } }
+.dx-ember { position: absolute; left: 50%; top: 55%; width: 9px; height: 9px; border-radius: 50%; background: radial-gradient(circle,#fff6c9,#ff9a2e 55%,rgba(255,60,0,0)); animation: dxEmber 0.95s ease-out forwards; }
+@keyframes dxEmber { 0% { transform: translate(0,0) scale(1); opacity: 1; } 100% { transform: translate(var(--ex), var(--ey)) scale(0.2); opacity: 0; } }
+
+/* ---- frozen: a block of ice grows over the card ---- */
+.dx-ice { position: absolute; inset: -9px -9px -22px -9px; pointer-events: none; z-index: 12; animation: dxIceIn 0.55s cubic-bezier(.2,.9,.3,1.2) backwards; filter: drop-shadow(0 0 8px rgba(140,215,255,0.85)); }
+@keyframes dxIceIn { 0% { opacity: 0; transform: scale(1.35); filter: brightness(3) drop-shadow(0 0 20px #fff); } 100% { opacity: 1; transform: scale(1); } }
+.dx-ice-glint { animation: dxGlint 3.2s ease-in-out infinite; }
+@keyframes dxGlint { 0%,55% { transform: translateX(-230px) skewX(-22deg); } 85%,100% { transform: translateX(260px) skewX(-22deg); } }
+.dx-snow { animation: dxSnow 2.6s linear infinite; }
+@keyframes dxSnow { 0% { transform: translateY(-12px); opacity: 0; } 15% { opacity: 1; } 85% { opacity: 1; } 100% { transform: translateY(205px); opacity: 0; } }
+.dx-frozen .dx-minion-art img, .dx-frozen .dx-minion-art canvas { filter: saturate(0.45) hue-rotate(165deg) brightness(1.08); }
+
+/* ---- toxic: green goo drips round the card and bubbles rise off it ---- */
+.dx-goo { position: absolute; inset: -9px -9px -16px -9px; pointer-events: none; z-index: 11; animation: dxGooIn 0.5s ease-out backwards; filter: drop-shadow(0 0 7px rgba(110,255,40,0.9)); }
+@keyframes dxGooIn { 0% { opacity: 0; transform: scaleY(0.3) translateY(-30px); } 100% { opacity: 1; transform: none; } }
+.dx-drip { transform-box: fill-box; transform-origin: 50% 0%; animation: dxDrip 2.4s ease-in-out infinite; }
+@keyframes dxDrip { 0%,100% { transform: scaleY(0.55); } 55% { transform: scaleY(1.25); } 75% { transform: scaleY(1.05); } }
+.dx-bubble { transform-box: fill-box; transform-origin: 50% 50%; animation: dxBubble 2.2s ease-in infinite; }
+@keyframes dxBubble { 0% { transform: translateY(0) scale(0.3); opacity: 0; } 15% { opacity: 0.95; } 80% { opacity: 0.9; } 100% { transform: translateY(-215px) scale(1.25); opacity: 0; } }
+.dx-toxic .dx-minion-frame { animation: dxToxicGlow 1.8s ease-in-out infinite; }
+.dx-toxic.dx-ready .dx-minion-frame, .dx-toxic.dx-targetable .dx-minion-frame { animation-name: dxReady; }
+.dx-toxic.dx-targetable .dx-minion-frame { animation-name: dxTarget; }
+.dx-selected.dx-toxic .dx-minion-frame { animation: none; }
+@keyframes dxToxicGlow { 0%,100% { box-shadow: 0 0 0 2px #4fbf1c, 0 0 12px 3px rgba(110,255,40,0.5), 0 8px 14px rgba(0,0,0,0.6); } 50% { box-shadow: 0 0 0 2px #b6ff3c, 0 0 24px 8px rgba(110,255,40,0.85), 0 8px 14px rgba(0,0,0,0.6); } }
+
+/* ---- shield bubble (Reinforced) ---- */
+.dx-shield { position: absolute; inset: -8px; border-radius: 22px; pointer-events: none; z-index: 10; border: 3px solid rgba(190,235,255,0.95);
+  background: radial-gradient(ellipse at 30% 20%,rgba(255,255,255,0.55),rgba(140,205,255,0.16) 45%,rgba(90,160,255,0.28) 100%); box-shadow: 0 0 16px 4px rgba(120,200,255,0.75), inset 0 0 20px rgba(200,235,255,0.6); animation: dxShield 2.4s ease-in-out infinite; }
+@keyframes dxShield { 0%,100% { opacity: 0.8; transform: scale(1); } 50% { opacity: 1; transform: scale(1.03); } }
+
+/* ---- board, banners, reveal ---- */
+.dx-mat3d { transform: perspective(1900px) rotateX(5deg); transform-origin: 50% 62%; }
+.dx-pulse { animation: dxPulse 3.5s ease-in-out infinite; }
+@keyframes dxPulse { 0%,100% { opacity: 0.55; } 50% { opacity: 1; } }
+.dx-banner { animation: dxBanner 1.5s cubic-bezier(.2,.8,.2,1) forwards; }
+@keyframes dxBanner { 0% { transform: translateX(-120%) skewX(-14deg); opacity: 0; } 18% { transform: translateX(0) skewX(-14deg); opacity: 1; } 78% { transform: translateX(0) skewX(-14deg); opacity: 1; } 100% { transform: translateX(120%) skewX(-14deg); opacity: 0; } }
+.dx-reveal { animation: dxReveal 1.35s cubic-bezier(.2,.8,.2,1) forwards; transform-style: preserve-3d; }
+@keyframes dxReveal { 0% { transform: perspective(1100px) translateY(var(--from,-260px)) rotateY(180deg) scale(0.35); opacity: 0; } 22% { transform: perspective(1100px) translateY(0) rotateY(0deg) scale(1.06); opacity: 1; } 30% { transform: perspective(1100px) rotateY(0deg) scale(1); opacity: 1; } 80% { transform: perspective(1100px) rotateY(0deg) scale(1); opacity: 1; } 100% { transform: perspective(1100px) translateY(30px) rotateX(40deg) scale(0.55); opacity: 0; } }
+.dx-modal { animation: dxModalIn 0.25s ease-out; }
+@keyframes dxModalIn { 0% { opacity: 0; } 100% { opacity: 1; } }
+.dx-pop { animation: dxPop 0.32s cubic-bezier(.2,.9,.3,1.3); }
+@keyframes dxPop { 0% { transform: scale(0.75) translateY(30px); opacity: 0; } 100% { transform: none; opacity: 1; } }
+.dx-endturn-ready { animation: dxEndTurn 1.6s ease-in-out infinite; }
+@keyframes dxEndTurn { 0%,100% { filter: brightness(1); } 50% { filter: brightness(1.22); } }
+.dx-title3d { animation: dxTitle 0.9s cubic-bezier(.2,.9,.3,1.2) backwards; }
+@keyframes dxTitle { 0% { transform: perspective(700px) rotateX(80deg) translateY(-80px) scale(1.6); opacity: 0; } 100% { transform: perspective(700px) rotateX(0) translateY(0) scale(1); opacity: 1; } }
+.dx-scroll::-webkit-scrollbar { width: 8px; height: 8px; } .dx-scroll::-webkit-scrollbar-thumb { background: rgba(255,255,255,0.25); border-radius: 4px; }
+@media (prefers-reduced-motion: reduce) {
+  .dx-root *, .dx-root *::after { animation-duration: 0.01s !important; animation-iteration-count: 1 !important; transition-duration: 0.01s !important; }
+  .dx-mat3d { transform: none; }
+}
+`;
+
+/* ---------- procedural grit textures (generated once, reused by every board) ---------- */
+const _dxTexCache = {};
+function dxNoiseTile(kind) {
+  if (_dxTexCache[kind]) return _dxTexCache[kind];
+  let url = "";
+  try {
+    const S = 256;
+    const cv = document.createElement("canvas");
+    cv.width = S; cv.height = S;
+    const ctx = cv.getContext("2d");
+    const img = ctx.createImageData(S, S);
+    const rand = mulberry32(kind === "grain" ? 1337 : 4242);
+    if (kind === "grain") {
+      for (let i = 0; i < S * S; i++) {
+        const v = rand();
+        const light = rand() > 0.5;
+        img.data[i * 4] = img.data[i * 4 + 1] = img.data[i * 4 + 2] = light ? 255 : 0;
+        img.data[i * 4 + 3] = Math.floor(v * v * 70);
+      }
+    } else {
+      // tileable fractal value noise -> dark, blotchy stains
+      const octaves = [4, 8, 16, 32];
+      const grids = octaves.map((L) => Array.from({ length: L * L }, () => rand()));
+      const smooth = (t) => t * t * (3 - 2 * t);
+      for (let y = 0; y < S; y++) {
+        for (let x = 0; x < S; x++) {
+          let v = 0, amp = 0.5, tot = 0;
+          octaves.forEach((L, o) => {
+            const gx = (x / S) * L, gy = (y / S) * L;
+            const x0 = Math.floor(gx), y0 = Math.floor(gy);
+            const fx = smooth(gx - x0), fy = smooth(gy - y0);
+            const g = grids[o];
+            const a = g[(y0 % L) * L + (x0 % L)], b = g[(y0 % L) * L + ((x0 + 1) % L)];
+            const c = g[((y0 + 1) % L) * L + (x0 % L)], d = g[((y0 + 1) % L) * L + ((x0 + 1) % L)];
+            v += amp * (a + (b - a) * fx + (c - a) * fy + (a - b - c + d) * fx * fy);
+            tot += amp; amp *= 0.5;
+          });
+          v /= tot;
+          const i = (y * S + x) * 4;
+          img.data[i] = img.data[i + 1] = img.data[i + 2] = 0;
+          img.data[i + 3] = Math.max(0, Math.min(255, Math.floor((v - 0.38) * 2.6 * 255)));
+        }
+      }
+    }
+    ctx.putImageData(img, 0, 0);
+    url = cv.toDataURL("image/png");
+  } catch (e) { url = ""; }
+  _dxTexCache[kind] = url;
+  return url;
+}
+
+// A deterministic set of jagged crack lines, as one SVG path string.
+function dxCracks(seed, count, w, h, len) {
+  const rnd = mulberry32(seed);
+  let d = "";
+  for (let i = 0; i < count; i++) {
+    let x = rnd() * w, y = rnd() * h, ang = rnd() * Math.PI * 2;
+    d += `M${x.toFixed(0)} ${y.toFixed(0)}`;
+    const steps = 5 + Math.floor(rnd() * 7);
+    for (let s = 0; s < steps; s++) {
+      ang += (rnd() - 0.5) * 1.3;
+      const l = len * (0.4 + rnd() * 0.8);
+      x += Math.cos(ang) * l; y += Math.sin(ang) * l;
+      d += `L${x.toFixed(0)} ${y.toFixed(0)}`;
+      if (rnd() > 0.62) {
+        const a2 = ang + (rnd() > 0.5 ? 1 : -1) * (0.6 + rnd() * 0.7);
+        const l2 = l * (0.5 + rnd() * 0.8);
+        d += `L${(x + Math.cos(a2) * l2).toFixed(0)} ${(y + Math.sin(a2) * l2).toFixed(0)}M${x.toFixed(0)} ${y.toFixed(0)}`;
+      }
+    }
+  }
+  return d;
+}
+const DX_CRACKS_A = dxCracks(11, 9, 1600, 1000, 70);
+const DX_CRACKS_B = dxCracks(29, 16, 1600, 1000, 55);
+const DX_CRACKS_C = dxCracks(53, 26, 1600, 1000, 62);
+
+/* ---------- the six boards ---------- */
+function DeluxeBackdrop({ styleId }) {
+  const stain = dxNoiseTile("stain");
+  const grain = dxNoiseTile("grain");
+  const svgProps = { viewBox: "0 0 1600 1000", preserveAspectRatio: "xMidYMid slice", width: "100%", height: "100%", style: { position: "absolute", inset: 0, display: "block" } };
+  let base = "#222", stainOpacity = 0.6, stainSize = 620, decor = null, glow = null;
+
+  if (styleId === "rustyard") {
+    base = "linear-gradient(165deg,#6b4630 0%,#4a3327 40%,#33292a 75%,#24201f 100%)";
+    stainOpacity = 0.75;
+    const seams = [];
+    for (let x = 0; x <= 1600; x += 320) seams.push(<g key={"v" + x}><rect x={x - 3} y="0" width="6" height="1000" fill="#150f0c" /><rect x={x + 3} y="0" width="2" height="1000" fill="rgba(255,200,150,0.14)" /></g>);
+    for (let y = 0; y <= 1000; y += 250) seams.push(<g key={"h" + y}><rect x="0" y={y - 3} width="1600" height="6" fill="#150f0c" /><rect x="0" y={y + 3} width="1600" height="2" fill="rgba(255,200,150,0.14)" /></g>);
+    const rivets = [];
+    for (let x = 0; x <= 1600; x += 320) for (let y = 0; y <= 1000; y += 250) {
+      [[26, 26], [-26, 26], [26, -26], [-26, -26]].forEach(([dx, dy], k) => {
+        rivets.push(<g key={`${x}-${y}-${k}`}>
+          <rect x={x + dx - 5} y={y + dy} width="10" height="70" fill="url(#dxRustStreak)" opacity="0.7" />
+          <circle cx={x + dx} cy={y + dy} r="8" fill="#2a1d16" /><circle cx={x + dx - 2} cy={y + dy - 2} r="5" fill="#9a8372" /><circle cx={x + dx - 3} cy={y + dy - 3} r="2" fill="#e6d6c6" />
+        </g>);
+      });
+    }
+    decor = (
+      <svg {...svgProps}>
+        <defs>
+          <linearGradient id="dxRustStreak" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stopColor="#c8581a" stopOpacity="0.9" /><stop offset="1" stopColor="#c8581a" stopOpacity="0" /></linearGradient>
+          <radialGradient id="dxRustBlot"><stop offset="0" stopColor="#d2601c" stopOpacity="0.75" /><stop offset="0.6" stopColor="#8a3a12" stopOpacity="0.35" /><stop offset="1" stopColor="#8a3a12" stopOpacity="0" /></radialGradient>
+        </defs>
+        <ellipse cx="230" cy="180" rx="330" ry="210" fill="url(#dxRustBlot)" /><ellipse cx="1330" cy="770" rx="420" ry="250" fill="url(#dxRustBlot)" />
+        <ellipse cx="980" cy="230" rx="240" ry="150" fill="url(#dxRustBlot)" opacity="0.7" /><ellipse cx="420" cy="860" rx="300" ry="160" fill="url(#dxRustBlot)" opacity="0.8" />
+        {seams}{rivets}
+        <path d={DX_CRACKS_A} stroke="rgba(15,8,5,0.7)" strokeWidth="2" fill="none" />
+        <g stroke="rgba(235,215,195,0.22)" strokeWidth="1.5"><path d="M120 620l210-40M150 640l160-22M1180 150l230 60M1210 190l150 30M700 900l260-30" /></g>
+      </svg>
+    );
+  } else if (styleId === "bunker") {
+    base = "linear-gradient(170deg,#5a605e 0%,#454a49 45%,#2f3332 100%)";
+    stainOpacity = 0.55;
+    decor = (
+      <svg {...svgProps}>
+        <defs>
+          <pattern id="dxHazard" width="80" height="80" patternUnits="userSpaceOnUse" patternTransform="rotate(45)"><rect width="40" height="80" fill="#e2bb1f" /><rect x="40" width="40" height="80" fill="#17181a" /></pattern>
+        </defs>
+        <g stroke="#1b1e1d" strokeWidth="5"><path d="M0 333h1600M0 667h1600M533 0v1000M1067 0v1000" /></g>
+        <g stroke="rgba(255,255,255,0.1)" strokeWidth="2"><path d="M0 337h1600M0 671h1600M537 0v1000M1071 0v1000" /></g>
+        <rect x="0" y="0" width="1600" height="46" fill="url(#dxHazard)" opacity="0.72" /><rect x="0" y="954" width="1600" height="46" fill="url(#dxHazard)" opacity="0.72" />
+        <rect x="0" y="46" width="1600" height="5" fill="#111" /><rect x="0" y="949" width="1600" height="5" fill="#111" />
+        <g fill="rgba(235,235,225,0.16)" fontFamily="Impact, 'Arial Narrow', sans-serif" fontWeight="700">
+          <text x="70" y="250" fontSize="150">B-12</text><text x="1140" y="880" fontSize="110">SECTOR 06</text>
+        </g>
+        <g fill="none" stroke="#151716" strokeWidth="6"><circle cx="1380" cy="210" r="62" /><path d="M1326 180h108M1320 210h120M1326 240h108" /></g>
+        <g fill="#1a1c1b"><circle cx="180" cy="800" r="46" /><circle cx="180" cy="800" r="30" fill="#0b0c0c" /></g>
+        <path d={DX_CRACKS_B} stroke="rgba(10,12,12,0.75)" strokeWidth="2.2" fill="none" />
+        <path d="M600 0c20 120-30 200 10 330M1000 667c-30 110 40 190 0 333" stroke="rgba(20,40,30,0.5)" strokeWidth="26" fill="none" strokeLinecap="round" />
+      </svg>
+    );
+  } else if (styleId === "swamp") {
+    base = "radial-gradient(ellipse at 50% 45%,#2c4320 0%,#1a2a14 45%,#0b140a 100%)";
+    stainOpacity = 0.7;
+    decor = (
+      <svg {...svgProps}>
+        <defs>
+          <radialGradient id="dxPool"><stop offset="0" stopColor="#d6ff7a" stopOpacity="0.9" /><stop offset="0.45" stopColor="#6fe01f" stopOpacity="0.6" /><stop offset="1" stopColor="#2f8a0a" stopOpacity="0" /></radialGradient>
+        </defs>
+        <g className="dx-pulse">
+          <ellipse cx="210" cy="230" rx="250" ry="120" fill="url(#dxPool)" /><ellipse cx="1390" cy="800" rx="290" ry="140" fill="url(#dxPool)" />
+          <ellipse cx="1280" cy="150" rx="170" ry="80" fill="url(#dxPool)" opacity="0.8" /><ellipse cx="330" cy="880" rx="210" ry="95" fill="url(#dxPool)" opacity="0.8" />
+        </g>
+        <g fill="none" stroke="#0a0f07" strokeLinecap="round">
+          <path d="M-20 520c160-70 250 60 420 0s220-150 380-120" strokeWidth="26" /><path d="M300 525c40 80 20 150 90 210M560 440c-30-90 30-140 0-220" strokeWidth="13" />
+          <path d="M1620 430c-190 40-260 150-430 120s-250 60-380 40" strokeWidth="24" /><path d="M1190 550c-10 90 60 130 40 220M980 590c30-70-20-130 30-200" strokeWidth="12" />
+        </g>
+        <g fill="none" stroke="rgba(160,255,90,0.28)" strokeWidth="3"><path d="M-20 512c160-70 250 60 420 0s220-150 380-120M1620 422c-190 40-260 150-430 120s-250 60-380 40" /></g>
+        <g fill="rgba(190,255,120,0.5)"><circle cx="180" cy="210" r="9" /><circle cx="250" cy="250" r="6" /><circle cx="1360" cy="790" r="11" /><circle cx="1430" cy="830" r="7" /><circle cx="1290" cy="140" r="6" /><circle cx="320" cy="870" r="8" /></g>
+      </svg>
+    );
+    glow = "radial-gradient(ellipse at 50% 50%,rgba(120,255,60,0.10),rgba(0,0,0,0) 60%)";
+  } else if (styleId === "highway") {
+    base = "linear-gradient(180deg,#4a2a1c 0%,#33302f 16%,#262524 55%,#191818 100%)";
+    stainOpacity = 0.6;
+    decor = (
+      <svg {...svgProps}>
+        <defs><linearGradient id="dxSky" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stopColor="#ff6a1a" stopOpacity="0.5" /><stop offset="1" stopColor="#ff6a1a" stopOpacity="0" /></linearGradient></defs>
+        <rect x="0" y="0" width="1600" height="230" fill="url(#dxSky)" />
+        <g stroke="#d9b21e" strokeWidth="11" opacity="0.62" strokeDasharray="150 22 60 34 210 18"><path d="M0 488h1600" /><path d="M0 512h1600" strokeDasharray="90 30 240 26 120 40" /></g>
+        <g stroke="#e8e4da" strokeWidth="12" opacity="0.42" strokeDasharray="120 90"><path d="M0 90h1600M0 910h1600" /></g>
+        <g fill="none" stroke="rgba(0,0,0,0.5)" strokeWidth="34" strokeLinecap="round"><path d="M-40 760c330-70 520 40 900-110" /><path d="M-40 820c330-70 520 40 900-110" /><path d="M1640 240c-260 30-420 130-700 90" strokeWidth="26" /></g>
+        <path d={DX_CRACKS_C} stroke="rgba(0,0,0,0.8)" strokeWidth="2.4" fill="none" />
+        <path d={DX_CRACKS_A} stroke="rgba(255,255,255,0.07)" strokeWidth="1.2" fill="none" transform="translate(3,3)" />
+        <g fill="#0f0e0e"><ellipse cx="1240" cy="700" rx="130" ry="62" /><ellipse cx="330" cy="290" rx="95" ry="44" /></g>
+        <g fill="rgba(255,120,40,0.5)" className="dx-pulse"><circle cx="1210" cy="690" r="5" /><circle cx="1275" cy="715" r="4" /><circle cx="320" cy="285" r="4" /><circle cx="1255" cy="682" r="3" /></g>
+      </svg>
+    );
+    glow = "linear-gradient(180deg,rgba(255,110,30,0.16),rgba(0,0,0,0) 35%)";
+  } else if (styleId === "reactor") {
+    base = "radial-gradient(ellipse at 50% 50%,#14303d 0%,#0d1c26 45%,#060d12 100%)";
+    stainOpacity = 0.5;
+    decor = (
+      <svg {...svgProps}>
+        <defs>
+          <pattern id="dxHex" width="84" height="145.5" patternUnits="userSpaceOnUse"><path d="M42 0l42 24.25v48.5L42 97 0 72.75v-48.5zM42 97v48.5M0 72.75l-42 24.25M84 72.75l42 24.25" fill="none" stroke="rgba(80,220,255,0.17)" strokeWidth="2" /></pattern>
+          <radialGradient id="dxCore"><stop offset="0" stopColor="#b9f6ff" stopOpacity="0.55" /><stop offset="0.4" stopColor="#2fd0f5" stopOpacity="0.25" /><stop offset="1" stopColor="#2fd0f5" stopOpacity="0" /></radialGradient>
+        </defs>
+        <rect width="1600" height="1000" fill="url(#dxHex)" />
+        <circle cx="800" cy="500" r="430" fill="url(#dxCore)" className="dx-pulse" />
+        <g transform="translate(800,500)" fill="rgba(70,220,255,0.13)" stroke="rgba(120,235,255,0.3)" strokeWidth="3">
+          <circle r="52" />
+          {[0, 120, 240].map((a) => <path key={a} transform={`rotate(${a})`} d="M-62 -107A124 124 0 0 1 62 -107L165 -286A330 330 0 0 0 -165 -286Z" />)}
+          <circle r="360" fill="none" strokeDasharray="26 14" />
+        </g>
+        <g fill="#0a1218" stroke="#1f3b49" strokeWidth="4"><rect x="-10" y="60" width="1620" height="44" /><rect x="-10" y="896" width="1620" height="44" /></g>
+        <g fill="rgba(70,220,255,0.55)" className="dx-pulse">{Array.from({ length: 16 }).map((_, i) => <rect key={i} x={40 + i * 100} y="76" width="46" height="10" rx="3" />)}{Array.from({ length: 16 }).map((_, i) => <rect key={"b" + i} x={40 + i * 100} y="912" width="46" height="10" rx="3" />)}</g>
+        <path d={DX_CRACKS_A} stroke="rgba(0,0,0,0.6)" strokeWidth="2" fill="none" />
+      </svg>
+    );
+    glow = "radial-gradient(ellipse at 50% 50%,rgba(60,220,255,0.12),rgba(0,0,0,0) 62%)";
+  } else {
+    base = "linear-gradient(160deg,#d1b07c 0%,#b08d5c 40%,#8b6a44 78%,#6a4f33 100%)";
+    stainOpacity = 0.38;
+    decor = (
+      <svg {...svgProps}>
+        <defs><radialGradient id="dxSun"><stop offset="0" stopColor="#fff3cf" stopOpacity="0.7" /><stop offset="1" stopColor="#fff3cf" stopOpacity="0" /></radialGradient></defs>
+        <ellipse cx="260" cy="120" rx="620" ry="360" fill="url(#dxSun)" />
+        <g fill="rgba(255,235,190,0.2)"><ellipse cx="1150" cy="300" rx="520" ry="80" /><ellipse cx="420" cy="760" rx="600" ry="90" /></g>
+        <g fill="rgba(70,45,20,0.22)"><ellipse cx="1150" cy="352" rx="520" ry="46" /><ellipse cx="420" cy="818" rx="600" ry="52" /></g>
+        <path d={DX_CRACKS_C} stroke="rgba(58,36,16,0.72)" strokeWidth="3" fill="none" />
+        <path d={DX_CRACKS_B} stroke="rgba(58,36,16,0.5)" strokeWidth="2" fill="none" />
+        <path d={DX_CRACKS_C} stroke="rgba(255,240,205,0.3)" strokeWidth="1.3" fill="none" transform="translate(2.5,2.5)" />
+        <g fill="none" stroke="#efe6cf" strokeWidth="9" strokeLinecap="round" opacity="0.85">
+          <path d="M1290 760q40-70 120-60M1300 790q46-64 126-54M1312 820q50-56 128-46M1326 850q52-46 126-36" /><path d="M1280 742l64 124" strokeWidth="7" />
+        </g>
+        <g fill="#efe6cf" opacity="0.85"><path d="M196 196c-34 0-58 24-58 54 0 20 10 34 22 42v24h72v-24c12-8 22-22 22-42 0-30-24-54-58-54z" /><circle cx="176" cy="250" r="11" fill="#6a4f33" /><circle cx="216" cy="250" r="11" fill="#6a4f33" /></g>
+      </svg>
+    );
+    glow = "radial-gradient(ellipse at 20% 10%,rgba(255,240,200,0.18),rgba(0,0,0,0) 55%)";
+  }
+
+  return (
+    <div style={{ position: "absolute", inset: 0, overflow: "hidden", background: base, transform: "translateZ(0)" }}>
+      {decor}
+      {stain && <div style={{ position: "absolute", inset: 0, backgroundImage: `url(${stain})`, backgroundSize: `${stainSize}px ${stainSize}px`, opacity: stainOpacity }} />}
+      {grain && <div style={{ position: "absolute", inset: 0, backgroundImage: `url(${grain})`, backgroundSize: "256px 256px", opacity: 0.9 }} />}
+      {glow && <div style={{ position: "absolute", inset: 0, background: glow }} />}
+      <div style={{ position: "absolute", inset: 0, background: "radial-gradient(ellipse at 50% 50%,rgba(0,0,0,0) 42%,rgba(0,0,0,0.62) 100%)" }} />
+    </div>
+  );
+}
+
+/* ---------- colourful stand-in art for cards that have no picture yet ---------- */
+function deluxeTextureCanvas(canvas, seed, iconKey, tint) {
+  const ctx = canvas.getContext("2d");
+  const W = canvas.width, H = canvas.height;
+  const rnd = (n) => { const x = Math.sin(seed + n) * 10000; return x - Math.floor(x); };
+  // dusty sky in the faction's colour
+  const sky = ctx.createLinearGradient(0, 0, 0, H);
+  sky.addColorStop(0, tint.dark);
+  sky.addColorStop(0.5, tint.c);
+  sky.addColorStop(0.78, "#f1d9a6");
+  sky.addColorStop(1, "#3a2a1c");
+  ctx.fillStyle = sky;
+  ctx.fillRect(0, 0, W, H);
+  const sx = W * (0.2 + rnd(2) * 0.6), sy = H * (0.38 + rnd(3) * 0.14);
+  const sun = ctx.createRadialGradient(sx, sy, 2, sx, sy, W * 0.55);
+  sun.addColorStop(0, "rgba(255,250,225,0.95)");
+  sun.addColorStop(0.12, "rgba(255,236,180,0.55)");
+  sun.addColorStop(1, "rgba(255,220,160,0)");
+  ctx.fillStyle = sun;
+  ctx.fillRect(0, 0, W, H);
+  // three layers of broken skyline, nearer = darker
+  [[0.50, 0.20, "rgba(60,48,44,0.45)"], [0.62, 0.24, "rgba(34,28,27,0.75)"], [0.76, 0.2, "rgba(12,11,12,0.95)"]].forEach(([baseY, amp, col], layer) => {
+    ctx.fillStyle = col;
+    let x = -4, k = 10 + layer * 50;
+    while (x < W) {
+      const bw = 10 + rnd(k++) * (34 - layer * 6), bh = H * amp * (0.25 + rnd(k++) * 0.75);
+      const top = H * baseY - bh * 0.4;
+      ctx.fillRect(x, top, bw, H - top);
+      if (rnd(k++) > 0.6) ctx.fillRect(x + bw * 0.4, top - 12 - rnd(k++) * 16, 3, 30); // antenna / rebar
+      x += bw + rnd(k++) * 8;
+    }
+  });
+  // faction emblem, small and low, so it reads as a marking rather than as the picture
+  ctx.save();
+  const size = Math.min(W, H) * 0.34;
+  const cx = W / 2, cy = H * 0.5;
+  ctx.fillStyle = "rgba(10,10,12,0.72)";
+  ctx.beginPath(); ctx.arc(cx, cy, size * 0.78, 0, Math.PI * 2); ctx.fill();
+  ctx.strokeStyle = tint.c; ctx.lineWidth = 4; ctx.stroke();
+  ctx.translate(cx - size / 2, cy - size / 2);
+  ctx.scale(size / 24, size / 24);
+  ctx.lineJoin = "round"; ctx.lineCap = "round";
+  try { ctx.strokeStyle = "rgba(255,248,230,0.95)"; ctx.lineWidth = 1.5; ctx.stroke(new Path2D(ICON_PATHS[iconKey])); } catch (e) {}
+  ctx.restore();
+  for (let i = 0; i < 420; i++) {
+    const shade = rnd(i * 3 + 400) > 0.5 ? 255 : 0;
+    ctx.fillStyle = `rgba(${shade},${shade},${shade},0.07)`;
+    ctx.fillRect(rnd(i * 3 + 401) * W, rnd(i * 3 + 402) * H, 2, 2);
+  }
+  const vg = ctx.createRadialGradient(W / 2, H / 2, W * 0.25, W / 2, H / 2, W * 0.8);
+  vg.addColorStop(0, "rgba(0,0,0,0)");
+  vg.addColorStop(1, "rgba(0,0,0,0.6)");
+  ctx.fillStyle = vg;
+  ctx.fillRect(0, 0, W, H);
+}
+function DeluxeArt({ card }) {
+  const canvasRef = useRef(null);
+  const override = CARD_ART_OVERRIDES[card.name];
+  const hero = card.hero || null;
+  useEffect(() => {
+    if (override || !canvasRef.current) return;
+    const keys = Object.keys(ICON_PATHS);
+    deluxeTextureCanvas(canvasRef.current, hash(card.id || card.name), keys[hash(card.name) % keys.length], dxFaction(hero));
+  }, [card.name, card.id, override, hero]);
+  if (override) return <img src={override} alt={card.name} draggable={false} style={{ width: "100%", height: "100%", objectFit: "cover", objectPosition: "50% 28%", display: "block" }} />;
+  return <canvas ref={canvasRef} width={300} height={300} style={{ width: "100%", height: "100%", display: "block", objectFit: "cover" }} />;
+}
+
+// Makes a card lean toward the pointer, with a moving highlight - the "3D" feel on hover.
+const dxTilt = {
+  onMouseMove: (e) => {
+    const el = e.currentTarget;
+    const r = el.getBoundingClientRect();
+    const px = (e.clientX - r.left) / r.width - 0.5, py = (e.clientY - r.top) / r.height - 0.5;
+    el.style.setProperty("--dx-ry", (px * 18).toFixed(1) + "deg");
+    el.style.setProperty("--dx-rx", (-py * 14).toFixed(1) + "deg");
+    el.style.setProperty("--dx-gx", (50 + px * 90).toFixed(0) + "%");
+    el.style.setProperty("--dx-gy", (50 + py * 90).toFixed(0) + "%");
+    el.style.setProperty("--dx-glare", "1");
+  },
+  onMouseLeave: (e) => {
+    const el = e.currentTarget;
+    el.style.setProperty("--dx-ry", "0deg");
+    el.style.setProperty("--dx-rx", "0deg");
+    el.style.setProperty("--dx-glare", "0");
+  },
+};
+
+/* ---------- the card face (base size 240 x 336, drawn at any scale) ---------- */
+const DX_CARD_W = 240, DX_CARD_H = 336;
+function DeluxeCard({ card, scale = 1, dim, playable, tilt, selected }) {
+  const r = DX_RARITY[card.rarity] || DX_RARITY.common;
+  const fac = dxFaction(card.hero);
+  const isSpell = card.type === "spell";
+  return (
+    <div className={playable ? "dx-playable" : undefined} style={{ width: DX_CARD_W * scale, height: DX_CARD_H * scale, position: "relative", flexShrink: 0, fontFamily: DX_FONT }} {...(tilt ? dxTilt : {})}>
+      <div className={"dx-card" + (dim ? " dx-card-dim" : "")} style={{ width: DX_CARD_W, height: DX_CARD_H, transform: scale === 1 ? undefined : `scale(${scale}) perspective(900px) rotateX(var(--dx-rx,0deg)) rotateY(var(--dx-ry,0deg))`, transformOrigin: "0 0" }}>
+        <div className="dx-card-frame" style={{ background: r.frame, outline: selected ? "5px solid #ff5a48" : "none", outlineOffset: 2 }}>
+          <div style={{ position: "relative", width: "100%", height: "100%", borderRadius: 10, overflow: "hidden", background: `linear-gradient(180deg,${fac.dark} 0%,#141312 100%)`, boxShadow: "inset 0 0 0 2px rgba(0,0,0,0.65)" }}>
+            {/* art */}
+            <div style={{ position: "absolute", left: 6, right: 6, top: 6, height: 150, borderRadius: 7, overflow: "hidden", boxShadow: "inset 0 0 0 2px rgba(0,0,0,0.7)", background: "#000" }}>
+              <DeluxeArt card={card} />
+              <div style={{ position: "absolute", inset: 0, boxShadow: "inset 0 0 22px rgba(0,0,0,0.6)", pointerEvents: "none" }} />
+            </div>
+            {/* name ribbon */}
+            <div style={{ position: "absolute", left: 0, right: 0, top: 146, height: 36, background: "linear-gradient(180deg,#3a3a40,#17171a)", borderTop: `2px solid ${r.edge}`, borderBottom: `2px solid ${r.edge}`, boxShadow: "0 3px 6px rgba(0,0,0,0.6)", padding: "0 10px", fontFamily: DX_DISPLAY_FONT, fontStretch: "condensed", textTransform: "uppercase", letterSpacing: "0.03em" }}>
+              <WrapFitText text={card.name} width="100%" height={32} maxFontSize={card.name.length > 15 ? 13.5 : 17} minFontSize={9} duration={7} color="#fff" />
+            </div>
+            {/* rules text */}
+            <div style={{ position: "absolute", left: 8, right: 8, top: 188, height: isSpell ? 96 : 84, borderRadius: 6, background: "linear-gradient(180deg,#f1e8d1,#d8caa6)", boxShadow: "inset 0 0 0 1px rgba(60,40,10,0.5), inset 0 2px 8px rgba(60,40,10,0.35)", padding: "4px 7px" }}>
+              {card.text ? <AutoScrollText text={card.text} height={isSpell ? 88 : 76} fontSize={13.5} duration={10} bold color="#2a2115" /> : <div style={{ height: "100%", display: "flex", alignItems: "center", justifyContent: "center", fontSize: 12, color: "rgba(60,40,10,0.45)", fontStyle: "italic" }}>No special ability</div>}
+            </div>
+            {/* footer: faction + rarity */}
+            <div style={{ position: "absolute", left: 0, right: 0, bottom: 5, textAlign: "center", fontFamily: DX_DISPLAY_FONT, fontStretch: "condensed", fontSize: 11.5, fontWeight: 700, letterSpacing: "0.12em", textTransform: "uppercase", color: fac.c, lineHeight: 1.15 }}>
+              <div style={{ display: "inline-block", width: 9, height: 9, background: r.gem, transform: "rotate(45deg)", boxShadow: `0 0 6px ${r.glow}`, border: "1px solid rgba(0,0,0,0.6)", marginBottom: 2 }} />
+              <div>{isSpell ? "Item" : (card.hero || "Neutral")}</div>
+            </div>
+          </div>
+        </div>
+        {card.cost !== null && card.cost !== undefined && <div className="dx-badge dx-badge-cost" style={{ left: -9, top: -9, width: 56, height: 56, fontSize: 32 }}>{card.cost}</div>}
+        {!isSpell && <div className="dx-badge dx-badge-atk" style={{ left: -9, bottom: -9, width: 54, height: 54, fontSize: 30 }}>{card.atk}</div>}
+        {!isSpell && <div className="dx-badge dx-badge-hp" style={{ right: -9, bottom: -9, width: 52, height: 58, fontSize: 30 }}>{card.hp}</div>}
+        <div className="dx-card-glare" />
+      </div>
+    </div>
+  );
+}
+
+// Card back, used for the opponent's hand and the decks.
+function DeluxeCardBack({ w = 44 }) {
+  const h = w * 1.4;
+  return (
+    <div style={{ width: w, height: h, borderRadius: w * 0.14, background: "linear-gradient(155deg,#8a5a2b,#4a2c12 45%,#2a1708)", padding: w * 0.08, boxShadow: "0 3px 6px rgba(0,0,0,0.6), inset 0 1px 0 rgba(255,255,255,0.35)", flexShrink: 0 }}>
+      <div style={{ width: "100%", height: "100%", borderRadius: w * 0.09, background: "repeating-linear-gradient(45deg,#1b1a18 0 6px,#26231f 6px 12px)", boxShadow: "inset 0 0 0 1px rgba(0,0,0,0.8)", display: "flex", alignItems: "center", justifyContent: "center" }}>
+        <svg viewBox="-12 -12 24 24" width={w * 0.6} height={w * 0.6}>
+          <circle r="11" fill="#e6c229" stroke="#171717" strokeWidth="1" /><circle r="2" fill="#171717" />
+          {[0, 120, 240].map((a) => <path key={a} transform={`rotate(${a})`} d="M-1.9 -3.3A3.8 3.8 0 0 1 1.9 -3.3L4.7 -8.2A9.5 9.5 0 0 0 -4.7 -8.2Z" fill="#171717" />)}
+        </svg>
+      </div>
+    </div>
+  );
+}
+
+function DeluxeCardDetail({ card, onClose }) {
+  const vw = typeof window !== "undefined" ? window.innerWidth : 800, vh = typeof window !== "undefined" ? window.innerHeight : 800;
+  const s = Math.max(0.6, Math.min(1.7, (vw - 60) / DX_CARD_W, (vh - 130) / DX_CARD_H));
+  // Rendered straight into <body> so it is sized in real screen pixels even
+  // when it is opened from inside the scaled match table.
+  return createPortal(
+    <div className="dx-root dx-modal" style={{ position: "fixed", inset: 0, background: "rgba(5,5,6,0.78)", display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", gap: 22, zIndex: 400 }} onClick={(e) => { e.stopPropagation(); onClose(); }}>
+      <div className="dx-pop" onClick={(e) => e.stopPropagation()}><DeluxeCard card={card} scale={s} tilt /></div>
+      <button className="dx-btn" style={{ fontSize: 18 }} onClick={(e) => { e.stopPropagation(); onClose(); }}>Close</button>
+    </div>,
+    document.body
+  );
+}
+
+/* ---------- ice and goo overlays (viewBox matches a 150 x 190 minion plus overhang) ---------- */
+function DxIceOverlay() {
+  return (
+    <svg className="dx-ice" viewBox="0 0 168 221" preserveAspectRatio="none">
+      <defs>
+        <linearGradient id="dxIceFill" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stopColor="#f2fbff" stopOpacity="0.62" /><stop offset="0.45" stopColor="#9fdcff" stopOpacity="0.34" /><stop offset="1" stopColor="#4aa4ee" stopOpacity="0.56" /></linearGradient>
+        <linearGradient id="dxIcicle" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stopColor="#ffffff" stopOpacity="0.96" /><stop offset="1" stopColor="#7cc8ff" stopOpacity="0.75" /></linearGradient>
+        <clipPath id="dxIceClip"><path d="M10 14l14-9 20 5 22-8 24 7 22-6 26 8 18-3 6 16-4 22 6 26-5 30 5 34-4 30 2 22-12 8-134 0-12-10 4-28-6-34 5-36-5-30 4-34z" /></clipPath>
+      </defs>
+      <path d="M10 14l14-9 20 5 22-8 24 7 22-6 26 8 18-3 6 16-4 22 6 26-5 30 5 34-4 30 2 22-12 8-134 0-12-10 4-28-6-34 5-36-5-30 4-34z" fill="url(#dxIceFill)" stroke="#e8f8ff" strokeWidth="2.5" strokeLinejoin="round" />
+      <g clipPath="url(#dxIceClip)"><rect className="dx-ice-glint" x="0" y="-10" width="46" height="240" fill="rgba(255,255,255,0.55)" /></g>
+      <g fill="none" stroke="rgba(255,255,255,0.85)" strokeWidth="1.6" strokeLinecap="round"><path d="M26 30l22 26-8 22 20 30M48 56l26-6M132 40l-20 30 10 26-22 24M112 70l-24 4M40 150l26 12 30-10 28 16" /></g>
+      <g fill="#ffffff" opacity="0.9"><path d="M8 20l20-14-4 20zM150 12l14 12-18 8zM4 150l14 10-12 12zM156 120l10 14-14 6z" /></g>
+      <g fill="url(#dxIcicle)" stroke="#e8f8ff" strokeWidth="1"><path d="M22 194l8 26 7-26zM46 194l6 18 6-18zM70 194l9 27 8-27zM100 194l5 15 6-15zM122 194l8 24 7-24zM142 194l5 14 5-14z" /></g>
+      <g fill="#fff">{[[30, 0], [64, 0.9], [98, 0.4], [132, 1.5], [48, 2.0], [116, 1.1]].map(([x, d], i) => <circle key={i} className="dx-snow" cx={x} cy="8" r={i % 2 ? 2.2 : 3} style={{ animationDelay: `${d}s` }} />)}</g>
+    </svg>
+  );
+}
+function DxGooOverlay() {
+  return (
+    <svg className="dx-goo" viewBox="0 0 168 215" preserveAspectRatio="none" style={{ overflow: "visible" }}>
+      <defs>
+        <linearGradient id="dxGoo" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stopColor="#d4ff5c" /><stop offset="0.5" stopColor="#74e01f" /><stop offset="1" stopColor="#2f9a0c" /></linearGradient>
+      </defs>
+      {/* top goo band with a wavy lower edge */}
+      <path d="M4 12c0-7 6-10 14-10h132c8 0 14 3 14 10v14c-6 8-12-2-20 4s-12 10-22 4-14-6-22 0-16 8-24 2-14-8-22-2-14 6-22 0-12-2-28-4z" fill="url(#dxGoo)" stroke="#1d5f0a" strokeWidth="2" />
+      {/* side runs + puddle */}
+      <path d="M4 22c7 10 8 30 4 54s4 40 2 62-2 40 0 58H2z" fill="url(#dxGoo)" stroke="#1d5f0a" strokeWidth="1.6" />
+      <path d="M164 22c-7 12-8 34-4 56s-4 36-2 60 2 40 0 58h8z" fill="url(#dxGoo)" stroke="#1d5f0a" strokeWidth="1.6" />
+      <path d="M2 196c14-8 26 4 40-2s24-6 40 0 26 4 42-2 26 2 42 4v12c-28 8-136 8-164 0z" fill="url(#dxGoo)" stroke="#1d5f0a" strokeWidth="1.8" />
+      {/* drips */}
+      {[[26, 30, 0], [58, 44, 0.7], [92, 26, 1.3], [120, 50, 0.3], [146, 34, 1.7]].map(([x, len, d], i) => (
+        <path key={i} className="dx-drip" style={{ animationDelay: `${d}s` }} d={`M${x - 6} 20q6 ${len * 0.5} 3 ${len * 0.75}a6.5 6.5 0 1 0 6 0q-3 -${len * 0.25} 3 -${len * 0.75}z`} fill="url(#dxGoo)" stroke="#1d5f0a" strokeWidth="1.6" />
+      ))}
+      <g fill="rgba(255,255,255,0.75)"><ellipse cx="34" cy="9" rx="13" ry="2.6" /><ellipse cx="104" cy="9" rx="20" ry="2.6" /><ellipse cx="60" cy="201" rx="16" ry="2.2" /></g>
+      {/* toxic bubbles */}
+      {[[24, 5, 0], [52, 7, 0.8], [84, 4, 1.5], [112, 8, 0.4], [140, 5, 1.1], [68, 3.5, 1.9], [128, 4, 2.0]].map(([x, r, d], i) => (
+        <g key={"b" + i} className="dx-bubble" style={{ animationDelay: `${d}s`, animationDuration: `${1.9 + (i % 3) * 0.45}s` }}>
+          <circle cx={x} cy="198" r={r} fill="rgba(170,255,70,0.5)" stroke="#e0ffa0" strokeWidth="1.4" />
+          <circle cx={x - r * 0.3} cy={198 - r * 0.3} r={r * 0.25} fill="#fff" />
+        </g>
+      ))}
+    </svg>
+  );
+}
+
+/* ---------- a minion on the board (base size 150 x 190) ---------- */
+const DX_MIN_W = 150, DX_MIN_H = 190;
+const DX_SHARDS = [
+  { clip: "polygon(0 0,55% 0,42% 38%,0 45%)", sx: "-95px", sy: "-70px", sr: "-38deg", srx: "50deg", sry: "-40deg" },
+  { clip: "polygon(55% 0,100% 0,100% 40%,62% 52%,42% 38%)", sx: "100px", sy: "-80px", sr: "44deg", srx: "-40deg", sry: "55deg" },
+  { clip: "polygon(0 45%,42% 38%,62% 52%,48% 100%,0 100%)", sx: "-80px", sy: "30px", sr: "-26deg", srx: "-60deg", sry: "-30deg" },
+  { clip: "polygon(100% 40%,100% 100%,48% 100%,62% 52%)", sx: "90px", sy: "40px", sr: "32deg", srx: "55deg", sry: "35deg" },
+];
+function DxMinionFace({ m, card, showStatus }) {
+  const r = DX_RARITY[card.rarity] || DX_RARITY.common;
+  const damaged = m.hp < m.maxHp;
+  const base = m.cardId ? findCard(m.cardId) : null;
+  const buffedAtk = base ? m.atk > base.atk : false;
+  const chips = (m.keywords || []).filter((k) => DX_KEYWORD_ICONS[k]);
+  const taunt = (m.keywords || []).includes("Taunt");
+  return (
+    <>
+      <div className="dx-minion-frame" style={{ background: r.frame }} />
+      <div className="dx-minion-art"><DeluxeArt card={card} /></div>
+      <div style={{ position: "absolute", left: 30, right: 30, bottom: 9, textAlign: "center", fontFamily: DX_DISPLAY_FONT, fontStretch: "condensed", fontWeight: 700, fontSize: 13, lineHeight: 1.05, textTransform: "uppercase", letterSpacing: "0.02em", color: "#fff", textShadow: "0 1px 2px #000, 0 0 6px #000", maxHeight: 42, overflow: "hidden" }}>{m.name}</div>
+      {taunt && (
+        <div style={{ position: "absolute", left: "50%", top: -15, transform: "translateX(-50%)", display: "flex", alignItems: "center", gap: 3, padding: "2px 8px 2px 5px", borderRadius: 8, background: "linear-gradient(180deg,#d7dde4,#7c858f)", border: "2px solid #1b1e22", fontFamily: DX_DISPLAY_FONT, fontWeight: 800, fontSize: 12, letterSpacing: "0.08em", color: "#14171a", boxShadow: "0 2px 4px rgba(0,0,0,0.6)", zIndex: 14 }}>
+          <svg viewBox="0 0 24 24" width="13" height="13"><path d="M12 2l8 3v6c0 5-3.4 9-8 11-4.6-2-8-6-8-11V5l8-3z" fill="#14171a" /></svg>TAUNT
+        </div>
+      )}
+      {chips.length > 0 && (
+        <div style={{ position: "absolute", left: -7, top: 14, display: "flex", flexDirection: "column", gap: 4, zIndex: 14 }}>
+          {chips.map((k) => (
+            <div key={k} title={DX_KEYWORD_ICONS[k].tip} style={{ width: 26, height: 26, borderRadius: "50%", background: DX_KEYWORD_ICONS[k].bg, border: "2px solid #0d0d0d", display: "flex", alignItems: "center", justifyContent: "center", boxShadow: "0 2px 4px rgba(0,0,0,0.6)" }}>
+              <svg viewBox="0 0 24 24" width="16" height="16"><path fillRule="evenodd" d={DX_KEYWORD_ICONS[k].d} fill={k === "Merchant" ? "none" : DX_KEYWORD_ICONS[k].fg} stroke={DX_KEYWORD_ICONS[k].fg} strokeWidth={k === "Merchant" ? 2 : 0.6} strokeLinejoin="round" /></svg>
+            </div>
+          ))}
+        </div>
+      )}
+      {showStatus && (m.keywords || []).includes("Toxic") && <DxGooOverlay />}
+      {showStatus && m.shielded && <div className="dx-shield" />}
+      {showStatus && m.frozen && <DxIceOverlay />}
+      <div className="dx-badge dx-badge-atk" style={{ left: -10, bottom: -10, width: 46, height: 46, fontSize: 26, zIndex: 15, color: buffedAtk ? "#b9ffb0" : "#fff" }}>{m.atk}</div>
+      <div className="dx-badge dx-badge-hp" style={{ right: -10, bottom: -10, width: 44, height: 50, fontSize: 26, zIndex: 15, color: damaged ? "#ffd24a" : "#fff" }}>{Math.max(0, m.hp)}</div>
+    </>
+  );
+}
+function DeluxeMinion({ m, scale = 1, onClick, selected, targetable, isEnemy, myTurn, side }) {
+  const card = cardLikeForMinion(m);
+  const dying = !!m.__dying;
+  const [showDetail, setShowDetail] = useState(false);
+  const [fx, setFx] = useState(null); // {id, text, color}
+  const [hit, setHit] = useState(false);
+  const prev = useRef({ hp: m.hp, shielded: m.shielded, atk: m.atk });
+  const pressTimer = useRef(null);
+  const longPressFired = useRef(false);
+
+  useEffect(() => {
+    if (dying) return;
+    const p = prev.current;
+    let next = null;
+    if (m.hp < p.hp) next = { text: `-${p.hp - m.hp}`, color: "#ff5a48", hit: true };
+    else if (m.hp > p.hp) next = { text: `+${m.hp - p.hp}`, color: "#7dff9a" };
+    else if (p.shielded && !m.shielded) next = { text: "BLOCKED", color: "#bfe9ff", hit: true };
+    else if (m.atk > p.atk) next = { text: `+${m.atk - p.atk} ATK`, color: "#ffd24a" };
+    prev.current = { hp: m.hp, shielded: m.shielded, atk: m.atk };
+    if (!next) return;
+    setFx({ ...next, id: Date.now() + Math.random() });
+    if (next.hit) setHit(true);
+    const t1 = setTimeout(() => setHit(false), 460);
+    const t2 = setTimeout(() => setFx(null), 1100);
+    return () => { clearTimeout(t1); clearTimeout(t2); };
+  }, [m.hp, m.shielded, m.atk, dying]);
+
+  const startPress = () => {
+    longPressFired.current = false;
+    pressTimer.current = setTimeout(() => { longPressFired.current = true; setShowDetail(true); }, 550);
+  };
+  const cancelPress = () => { if (pressTimer.current) { clearTimeout(pressTimer.current); pressTimer.current = null; } };
+  const handleClick = () => {
+    if (longPressFired.current) { longPressFired.current = false; return; }
+    if (!dying && onClick) onClick();
+  };
+  const spent = !isEnemy && !m.canAttack;
+  const ready = !isEnemy && myTurn && m.canAttack && !selected && !targetable;
+  const cls = ["dx-slot"];
+  if (dying) cls.push("dx-dying");
+  else {
+    if (spent) cls.push("dx-spent");
+    if (ready) cls.push("dx-ready");
+    if (selected) cls.push("dx-selected");
+    if (targetable) cls.push("dx-targetable");
+    if (hit) cls.push("dx-hit");
+    if (m.frozen) cls.push("dx-frozen");
+    if ((m.keywords || []).includes("Toxic")) cls.push("dx-toxic");
+    if ((m.keywords || []).includes("Taunt")) cls.push("dx-minion-taunt");
+  }
+  return (
+    <>
+      <div
+        className={cls.join(" ")}
+        data-dx-uid={m.uid}
+        data-dx-side={side}
+        style={{ width: DX_MIN_W * scale, height: DX_MIN_H * scale, cursor: onClick && !dying ? "pointer" : "default", zIndex: selected ? 20 : dying ? 5 : 10 }}
+        onClick={handleClick}
+        onContextMenu={(e) => { e.preventDefault(); setShowDetail(true); }}
+        onMouseDown={startPress} onMouseUp={cancelPress} onMouseLeave={cancelPress}
+        onTouchStart={startPress} onTouchEnd={cancelPress} onTouchMove={cancelPress}
+        title={dying ? undefined : `${m.name} (right-click or long-press for details)`}
+      >
+        <div className="dx-minion" style={{ width: DX_MIN_W, height: DX_MIN_H, transform: `scale(${scale})` }}>
+          {dying ? (
+            <>
+              <div className="dx-death-flash" />
+              {DX_SHARDS.map((sh, i) => (
+                <div key={i} className={"dx-shard" + ((m.keywords || []).includes("Taunt") ? " dx-minion-taunt" : "")} style={{ clipPath: sh.clip, WebkitClipPath: sh.clip, "--sx": sh.sx, "--sy": sh.sy, "--sr": sh.sr, "--srx": sh.srx, "--sry": sh.sry }}>
+                  <DxMinionFace m={m} card={card} showStatus={false} />
+                </div>
+              ))}
+              {Array.from({ length: 9 }).map((_, i) => {
+                const ang = (i / 9) * Math.PI * 2 + 0.4;
+                return <div key={"e" + i} className="dx-ember" style={{ "--ex": `${Math.cos(ang) * (70 + (i % 3) * 30)}px`, "--ey": `${Math.sin(ang) * 60 - 90 - (i % 4) * 22}px`, animationDelay: `${0.05 + (i % 3) * 0.06}s` }} />;
+              })}
+            </>
+          ) : (
+            <div className="dx-minion-hit">
+              <div className="dx-minion-body">
+                <DxMinionFace m={m} card={card} showStatus />
+                {spent && !m.frozen && <div style={{ position: "absolute", right: 8, top: 8, fontFamily: DX_DISPLAY_FONT, fontWeight: 800, fontSize: 15, color: "#dfe6ee", textShadow: "0 1px 3px #000", zIndex: 14 }}>Zzz</div>}
+              </div>
+            </div>
+          )}
+          {fx && <div key={fx.id} className="dx-floater" style={{ color: fx.color, fontSize: fx.text.length > 4 ? 22 : 40 }}>{fx.text}</div>}
+        </div>
+      </div>
+      {showDetail && <DeluxeCardDetail card={card} onClose={() => setShowDetail(false)} />}
+    </>
+  );
+}
+
+/* ---------- Settings screen (reached from the top menu) ---------- */
+function SettingsScreen({ onBack }) {
+  const display = useDisplay();
+  const sample = findCardByName("Albert Tesla") || CARD_DB[0];
+  const optionStyle = (active) => ({
+    display: "flex", gap: 10, alignItems: "flex-start", textAlign: "left", width: "100%", boxSizing: "border-box", padding: "10px 12px", marginTop: 8,
+    fontFamily: FONT, border: `2px solid ${active ? "#000" : "#999"}`, borderRadius: 6, background: active ? "#f3f3f3" : "#fff",
+    boxShadow: active ? "0 0 0 2px #000" : "none", cursor: "pointer", color: "#111",
+  });
+  return (
+    <div style={{ fontFamily: FONT, padding: "8px 20px 28px", maxWidth: 640, margin: "0 auto" }}>
+      <h2 style={{ fontSize: 18, borderBottom: "2px solid #000", paddingBottom: 6 }}>Settings</h2>
+      <div style={{ fontWeight: 700, fontSize: 14, marginTop: 12 }}>Display Options</div>
+      <div style={{ fontSize: 11, color: "#555", marginTop: 2 }}>Changes how the game looks on this device only. It never changes the rules, your cards or your rank.</div>
+      {DISPLAY_MODES.map((mode) => {
+        const active = display.mode === mode.id;
+        return (
+          <button key={mode.id} onClick={() => display.setDisplay({ mode: mode.id })} style={optionStyle(active)} aria-pressed={active}>
+            <span style={{ width: 16, height: 16, minWidth: 16, borderRadius: "50%", border: "2px solid #000", marginTop: 1, display: "flex", alignItems: "center", justifyContent: "center" }}>
+              {active && <span style={{ width: 8, height: 8, borderRadius: "50%", background: "#000" }} />}
+            </span>
+            <span>
+              <span style={{ display: "block", fontWeight: 700, fontSize: 13 }}>{mode.name}{mode.id === DEFAULT_DISPLAY.mode ? " (default)" : ""}</span>
+              <span style={{ display: "block", fontSize: 11, color: "#555", marginTop: 2 }}>{mode.desc}</span>
+            </span>
+          </button>
+        );
+      })}
+
+      <div style={{ marginTop: 16 }}>
+        <div style={{ fontWeight: 700, fontSize: 14 }}>Board Style</div>
+        <div style={{ fontSize: 11, color: "#555", marginTop: 2 }}>
+          {display.mode === "deluxe" ? "The table you play on in Full Graphics. You can also switch it during a match from the Menu button." : "Only used by Full Graphics - pick that option above to see it in a match."}
+        </div>
+        <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill,minmax(140px,1fr))", gap: 10, marginTop: 8 }}>
+          {BOARD_STYLES.map((b) => {
+            const active = display.board === b.id;
+            return (
+              <button key={b.id} onClick={() => display.setDisplay({ board: b.id })} aria-pressed={active} style={{ fontFamily: FONT, padding: 0, border: `2px solid ${active ? "#000" : "#999"}`, borderRadius: 6, background: "#fff", boxShadow: active ? "0 0 0 2px #000" : "none", cursor: "pointer", overflow: "hidden", textAlign: "left", color: "#111" }}>
+                <div style={{ position: "relative", height: 84 }}><DeluxeBackdrop styleId={b.id} /></div>
+                <div style={{ padding: "5px 7px 7px" }}>
+                  <div style={{ fontWeight: 700, fontSize: 12 }}>{b.name}</div>
+                  <div style={{ fontSize: 9.5, color: "#555", marginTop: 1 }}>{b.desc}</div>
+                </div>
+              </button>
+            );
+          })}
+        </div>
+      </div>
+
+      <div style={{ marginTop: 16 }}>
+        <div style={{ fontWeight: 700, fontSize: 14 }}>Preview</div>
+        <div style={{ fontSize: 11, color: "#555", marginTop: 2 }}>How a card looks with the option you picked.</div>
+        <div style={{ marginTop: 8, display: "flex", justifyContent: "center", padding: 16, border: "1px dashed #999", borderRadius: 6, position: "relative", overflow: "hidden", minHeight: 170 }}>
+          {display.mode === "deluxe" && <DeluxeBackdrop styleId={display.board} />}
+          <div style={{ position: "relative" }}><MiniCard cardId={sample.id} disabled={false} /></div>
+        </div>
+      </div>
+
+      <button onClick={onBack} style={{ marginTop: 18, padding: "10px 18px", fontFamily: FONT, fontSize: 13, fontWeight: 700, border: "2px solid #000", background: "#000", color: "#fff", cursor: "pointer", borderRadius: 4 }}>← Back</button>
+    </div>
+  );
+}
+
+/* =========================================================================
+   FULL GRAPHICS match screen. GameScreen below still owns every rule and
+   every click handler - this only draws the same match differently, so the
+   two views can never disagree about what a click does.
+   The whole table is laid out on a virtual canvas (at least 1440 x 900 in
+   landscape, 720 x 1180 in portrait) and scaled to fill the real window,
+   which is what keeps it looking the same on a 16:9 or 16:10 monitor and
+   still playable held upright on a phone.
+   ========================================================================= */
+function useDxStage() {
+  const calc = () => {
+    const w = (typeof window !== "undefined" && window.innerWidth) || 1280;
+    const h = (typeof window !== "undefined" && window.innerHeight) || 720;
+    const portrait = h > w;
+    const minW = portrait ? 720 : 1440, minH = portrait ? 1180 : 900;
+    const scale = Math.min(w / minW, h / minH);
+    return { portrait, scale, W: w / scale, H: h / scale };
+  };
+  const [st, setSt] = useState(calc);
+  useEffect(() => {
+    const on = () => setSt(calc());
+    window.addEventListener("resize", on);
+    window.addEventListener("orientationchange", on);
+    return () => { window.removeEventListener("resize", on); window.removeEventListener("orientationchange", on); };
+  }, []);
+  return st;
+}
+
+// Biggest minion size that fits `n` minions into a lane, using up to maxRows rows.
+function dxFit(n, laneW, laneH, maxRows, gapX, gapY, cap) {
+  let best = { s: 0, rows: 1, cols: Math.max(1, n) };
+  for (let rows = 1; rows <= maxRows; rows++) {
+    const cols = Math.max(1, Math.ceil(n / rows));
+    const s = Math.min((laneH - (rows - 1) * gapY) / rows / DX_MIN_H, (laneW - (cols - 1) * gapX) / cols / DX_MIN_W, cap);
+    if (s > best.s + 0.001) best = { s, rows, cols };
+  }
+  return best;
+}
+
+// Which log lines are new since the previous state (the log is capped, so it can also lose lines from the front).
+function dxNewLogLines(prev, cur) {
+  const key = (l) => (typeof l === "string" ? l : l.text);
+  const p = (prev || []).map(key), c = (cur || []).map(key);
+  if (!p.length) return [];
+  for (let k = Math.max(0, p.length - c.length); k <= p.length; k++) {
+    const len = p.length - k;
+    let ok = true;
+    for (let i = 0; ok && i < len; i++) if (p[k + i] !== c[i]) ok = false;
+    if (ok) return c.slice(len);
+  }
+  return [];
+}
+
+// Throws the attacker's card at its target and back, with a flash where it lands.
+function dxLunge(attEl, tgtEl, scale) {
+  if (!attEl || !tgtEl || typeof attEl.animate !== "function") return;
+  try {
+    const a = attEl.getBoundingClientRect(), t = tgtEl.getBoundingClientRect();
+    const dx = ((t.left + t.width / 2) - (a.left + a.width / 2)) / scale;
+    const dy = ((t.top + t.height / 2) - (a.top + a.height / 2)) / scale;
+    const lean = dx >= 0 ? 1 : -1;
+    const oldZ = attEl.style.zIndex;
+    attEl.style.zIndex = 70;
+    const anim = attEl.animate([
+      { transform: "translate3d(0,0,0) scale(1) rotate(0deg)" },
+      { transform: `translate3d(${-dx * 0.07}px,${-dy * 0.07}px,0) scale(1.16) rotate(${-5 * lean}deg)`, offset: 0.3 },
+      { transform: `translate3d(${dx * 0.8}px,${dy * 0.8}px,0) scale(1.05) rotate(${7 * lean}deg)`, offset: 0.55 },
+      { transform: "translate3d(0,0,0) scale(1) rotate(0deg)" },
+    ], { duration: 580, easing: "cubic-bezier(.3,.1,.3,1)" });
+    anim.onfinish = anim.oncancel = () => { attEl.style.zIndex = oldZ; };
+    setTimeout(() => {
+      tgtEl.classList.add("dx-impact");
+      setTimeout(() => tgtEl.classList.remove("dx-impact"), 430);
+    }, 310);
+  } catch (e) {}
+}
+
+function DxCrystals({ mana, maxMana, size }) {
+  return (
+    <div style={{ display: "flex", gap: size * 0.55, alignItems: "center", paddingLeft: size * 0.2 }} title={`${mana} of ${maxMana} AP available`}>
+      {Array.from({ length: 10 }).map((_, i) => {
+        const filled = i < mana, socket = i < maxMana;
+        return (
+          <div key={i} style={{
+            width: size, height: size, transform: "rotate(45deg)", borderRadius: size * 0.18, flexShrink: 0,
+            background: filled ? "radial-gradient(circle at 35% 30%,#e3ffec,#3be07a 45%,#0d7a38)" : socket ? "#10301d" : "rgba(255,255,255,0.07)",
+            border: `1.5px solid ${filled ? "#05301a" : socket ? "#1d5a36" : "rgba(255,255,255,0.1)"}`,
+            boxShadow: filled ? "0 0 8px rgba(70,255,140,0.85)" : "none",
+          }} />
+        );
+      })}
+    </div>
+  );
+}
+
+function DxHeroPlate({ player, side, u, wide, portraitSize = 96, targetable, attackable, onClick, children }) {
+  const fac = dxFaction(player.hero);
+  const [fx, setFx] = useState(null);
+  const [hit, setHit] = useState(false);
+  const prev = useRef({ health: player.health, armor: player.armor });
+  useEffect(() => {
+    const p = prev.current;
+    const lost = (p.health + p.armor) - (player.health + player.armor);
+    let next = null;
+    if (lost > 0) next = { text: `-${lost}`, color: "#ff5a48", hit: true };
+    else if (player.health > p.health) next = { text: `+${player.health - p.health}`, color: "#7dff9a" };
+    else if (player.armor > p.armor) next = { text: `+${player.armor - p.armor} ARMOR`, color: "#cfd8e3" };
+    prev.current = { health: player.health, armor: player.armor };
+    if (!next) return;
+    setFx({ ...next, id: Date.now() + Math.random() });
+    if (next.hit) setHit(true);
+    const t1 = setTimeout(() => setHit(false), 460);
+    const t2 = setTimeout(() => setFx(null), 1100);
+    return () => { clearTimeout(t1); clearTimeout(t2); };
+  }, [player.health, player.armor]);
+  const P = portraitSize * u; // hero picture size
+  const highlighted = targetable || attackable;
+  const hpFrac = Math.max(0, Math.min(1, player.health / player.maxHealth));
+  return (
+    <div
+      data-dx-hero={side}
+      onClick={onClick}
+      className={"dx-panel" + (highlighted ? " dx-hero-targetable" : "") + (hit ? " dx-hero-hit" : "")}
+      style={{ position: "relative", display: "flex", alignItems: "center", gap: 12 * u, padding: 10 * u, width: "100%", height: "100%", cursor: onClick ? "pointer" : "default", borderTop: `4px solid ${fac.c}` }}
+    >
+      <div style={{ position: "relative", width: P, height: P, flexShrink: 0 }}>
+        <div style={{ width: "100%", height: "100%", borderRadius: 14 * u, padding: 4 * u, background: `linear-gradient(155deg,#fff 0%,${fac.c} 30%,${fac.dark} 100%)`, boxShadow: "0 4px 8px rgba(0,0,0,0.6)" }}>
+          <div style={{ width: "100%", height: "100%", borderRadius: 10 * u, overflow: "hidden", background: "#111" }}>
+            {HERO_ART_OVERRIDES[player.hero] ? <img src={HERO_ART_OVERRIDES[player.hero]} alt={player.hero} draggable={false} style={{ width: "100%", height: "100%", objectFit: "cover" }} /> : <DeluxeArt card={{ name: player.hero, id: player.hero, hero: player.hero }} />}
+          </div>
+        </div>
+        <div className="dx-badge dx-badge-hp" style={{ right: -10 * u, bottom: -10 * u, width: 46 * u, height: 52 * u, fontSize: 25 * u, color: player.health < player.maxHealth ? "#ffd24a" : "#fff" }}>{Math.max(0, player.health)}</div>
+        {player.armor > 0 && (
+          <div className="dx-badge" style={{ left: -10 * u, bottom: -10 * u, width: 42 * u, height: 48 * u, fontSize: 23 * u, borderRadius: "22% 22% 50% 50% / 18% 18% 62% 62%", border: "3px solid #1c2026", background: "radial-gradient(circle at 34% 28%,#f4f7fa,#9aa5b1 45%,#4d5661)" }} title="Armor">{player.armor}</div>
+        )}
+      </div>
+      <div style={{ flex: 1, minWidth: 0 }}>
+        <div className="dx-display" style={{ fontWeight: 800, color: "#fff", lineHeight: 1.05 }}>
+          <MarqueeText text={player.displayName || player.hero} width="100%" fontSize={21 * u} bold color="#fff" duration={7} />
+        </div>
+        <div className="dx-display" style={{ fontSize: 12.5 * u, fontWeight: 700, color: fac.c, letterSpacing: "0.14em", whiteSpace: "nowrap" }}>{player.hero}</div>
+        <div style={{ height: 7 * u, borderRadius: 4 * u, background: "#3a0d09", border: "1px solid #000", overflow: "hidden", marginTop: 3 * u }}>
+          <div style={{ width: `${hpFrac * 100}%`, height: "100%", background: "linear-gradient(180deg,#ff8a6a,#d2281a)", transition: "width 0.4s" }} />
+        </div>
+        <div style={{ display: "flex", alignItems: "center", gap: 8 * u, marginTop: 6 * u }}>
+          <span className="dx-display" style={{ fontSize: 15 * u, fontWeight: 800, color: "#8dffb0", whiteSpace: "nowrap" }}>AP {player.mana}/{player.maxMana}</span>
+          {wide && <DxCrystals mana={player.mana} maxMana={player.maxMana} size={11 * u} />}
+        </div>
+        {!wide && <div style={{ marginTop: 7 * u }}><DxCrystals mana={player.mana} maxMana={player.maxMana} size={9 * u} /></div>}
+        <div style={{ fontSize: 13 * u, color: "#c9c2b3", marginTop: 5 * u, whiteSpace: "nowrap" }}>Deck {player.deck.length} · Hand {player.hand.length}</div>
+      </div>
+      {children}
+      {fx && <div key={fx.id} className="dx-floater" style={{ color: fx.color, fontSize: (fx.text.length > 4 ? 24 : 46) * u, left: P / 2 + 10 * u }}>{fx.text}</div>}
+    </div>
+  );
+}
+
+function DxModal({ children, z = 200, onBackdrop, maxWidth }) {
+  return (
+    <div className="dx-modal" style={{ position: "absolute", inset: 0, background: "rgba(5,5,6,0.76)", display: "flex", alignItems: "center", justifyContent: "center", zIndex: z, padding: 20 }} onClick={onBackdrop}>
+      <div className="dx-panel dx-pop" onClick={(e) => e.stopPropagation()} style={{ padding: 26, textAlign: "center", maxWidth: maxWidth || "92%", maxHeight: "94%", overflowY: "auto" }}>
+        {children}
+      </div>
+    </div>
+  );
+}
+
+function DeluxeGame({ g }) {
+  const display = useDisplay();
+  const { state, me, opp, myIdx, myTurn, pending, attacker, onAction } = g;
+  const oppIdx = myIdx === 0 ? 1 : 0;
+  const { portrait, W, H, scale } = useDxStage();
+  const u = portrait ? 1.4 : 1;
+  const boardDef = BOARD_STYLES.find((b) => b.id === display.board) || BOARD_STYLES[0];
+  const [menuOpen, setMenuOpen] = useState(false);
+  const [logOpen, setLogOpen] = useState(false);
+  const [banner, setBanner] = useState(null);
+  const [reveals, setReveals] = useState([]);
+  const rootRef = useRef(null);
+  const prevStateRef = useRef(null);
+  const scaleRef = useRef(scale);
+  scaleRef.current = scale;
+
+  // Turn the plain game log into motion: attacks lunge, played cards flip into view.
+  useEffect(() => {
+    const prev = prevStateRef.current;
+    prevStateRef.current = state;
+    if (!prev || !rootRef.current) return;
+    const lines = dxNewLogLines(prev.log, state.log);
+    if (!lines.length) return;
+    const root = rootRef.current;
+    const actor = prev.turn;
+    const foe = actor === 0 ? 1 : 0;
+    const sideOf = (idx) => (idx === myIdx ? "me" : "opp");
+    const elFor = (uid) => (uid ? root.querySelector(`[data-dx-uid="${uid}"]`) : null);
+    const changed = (m, nowBoard) => { const n = nowBoard.find((x) => x.uid === m.uid); return !n || n.hp !== m.hp || n.shielded !== m.shielded || n.canAttack !== m.canAttack; };
+    const pick = (board, nowBoard, name, needReady) => {
+      const named = board.filter((m) => m.name === name && (!needReady || m.canAttack));
+      return named.find((m) => changed(m, nowBoard)) || named[0] || null;
+    };
+    const newReveals = [];
+    lines.forEach((text) => {
+      let mt;
+      if ((mt = /^(.+) attacks (.+) for (\d+)\.$/.exec(text))) {
+        const att = pick(prev.players[actor].board, state.players[actor].board, mt[1], true);
+        dxLunge(att && elFor(att.uid), root.querySelector(`[data-dx-hero="${sideOf(foe)}"]`), scaleRef.current);
+      } else if ((mt = /^(.+) clashes with (.+)\.$/.exec(text))) {
+        const att = pick(prev.players[actor].board, state.players[actor].board, mt[1], true);
+        const def = pick(prev.players[foe].board, state.players[foe].board, mt[2], false);
+        dxLunge(att && elFor(att.uid), def && elFor(def.uid), scaleRef.current);
+      } else if ((mt = /^(.+) plays (.+)\.$/.exec(text))) {
+        const card = findCardByName(mt[2]);
+        if (card && (actor !== myIdx || card.type === "spell")) newReveals.push({ id: Date.now() + Math.random(), card, enemy: actor !== myIdx });
+      }
+    });
+    if (newReveals.length) setReveals((q) => [...q, ...newReveals].slice(-4));
+  }, [state]);
+
+  useEffect(() => {
+    if (!reveals.length) return;
+    const t = setTimeout(() => setReveals((q) => q.slice(1)), 1380);
+    return () => clearTimeout(t);
+  }, [reveals.length ? reveals[0].id : null]);
+
+  useEffect(() => {
+    if (state.winner !== null) return;
+    setBanner({ id: Date.now(), mine: state.turn === myIdx });
+    const t = setTimeout(() => setBanner(null), 1500);
+    return () => clearTimeout(t);
+  }, [state.turn, state.turnNumber]);
+
+  // While the table is up, stop the page behind it from scrolling or rubber-banding on phones.
+  useEffect(() => {
+    const b = document.body.style;
+    const old = { overflow: b.overflow, overscrollBehavior: b.overscrollBehavior, background: b.background };
+    b.overflow = "hidden"; b.overscrollBehavior = "none"; b.background = "#0b0b0c";
+    return () => { b.overflow = old.overflow; b.overscrollBehavior = old.overscrollBehavior; b.background = old.background; };
+  }, []);
+
+  const cycleBoard = () => {
+    const i = BOARD_STYLES.findIndex((b) => b.id === display.board);
+    display.setDisplay({ board: BOARD_STYLES[(i + 1) % BOARD_STYLES.length].id });
+  };
+
+  /* ----- shared pieces ----- */
+  const enemyMinionTargetable = !!attacker || (pending && ["enemyMinion", "any", "enemyAny", "anyMinion"].includes(pending.needsTarget));
+  const myMinionTargetable = pending && ["friendlyMinion", "anyMinion"].includes(pending.needsTarget);
+  const oppHeroTargetable = !!pending && (pending.needsTarget === "any" || pending.needsTarget === "enemyAny");
+
+  const renderLane = (board, isEnemy, laneW, laneH, maxRows) => {
+    const n = Math.max(board.length, portrait ? 3 : 6);
+    const gapX = portrait ? 12 : 18, gapY = 34;
+    const fit = dxFit(n, laneW - 20, laneH - 40, maxRows, gapX, gapY, portrait ? 1.28 : 1.2);
+    const w = DX_MIN_W * fit.s;
+    return (
+      <div style={{ width: laneW, height: laneH, display: "flex", alignItems: "center", justifyContent: "center" }}>
+        <div style={{ display: "flex", flexWrap: "wrap", justifyContent: "center", alignContent: "center", columnGap: gapX, rowGap: gapY, width: fit.cols * w + (fit.cols - 1) * gapX + 2, paddingTop: 12 }}>
+          {board.map((m) => (
+            <DeluxeMinion
+              key={m.uid} m={m} scale={fit.s} isEnemy={isEnemy} myTurn={myTurn} side={isEnemy ? "opp" : "me"}
+              selected={!isEnemy && attacker === m.uid}
+              targetable={!m.__dying && (isEnemy ? enemyMinionTargetable : myMinionTargetable)}
+              onClick={m.__dying ? undefined : () => g.handleMinionClick(m, isEnemy, isEnemy ? oppIdx : myIdx)}
+            />
+          ))}
+          {board.length === 0 && <div className="dx-display" style={{ fontSize: 15 * u, color: "rgba(255,255,255,0.22)", letterSpacing: "0.2em" }}>{isEnemy ? "Enemy side" : "Your side"}</div>}
+        </div>
+      </div>
+    );
+  };
+
+  const timerText = myTurn && state.turnStartedAt
+    ? (g.turnElapsed < 60000 ? `${Math.max(0, 60 - Math.floor(g.turnElapsed / 1000))}s` : `${Math.max(0, Math.ceil((120000 - g.turnElapsed) / 1000))}s`)
+    : null;
+  const endTurnBtn = (style) => (
+    <button
+      className={"dx-btn " + (myTurn ? "dx-btn-go dx-endturn-ready" : "")}
+      disabled={!myTurn}
+      onClick={() => onAction({ type: "endTurn" })}
+      style={{ display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", lineHeight: 1.1, ...style }}
+    >
+      <span style={{ fontSize: 26 * u }}>{myTurn ? "End Turn" : "Enemy Turn"}</span>
+      {timerText && <span style={{ fontSize: 17 * u, marginTop: 3 * u, color: g.turnElapsed >= 60000 ? "#8a0f00" : "#4a2400" }}>{timerText}</span>}
+    </button>
+  );
+
+  const pw = HERO_POWERS[me.hero];
+  const powerDisabled = !myTurn || me.powerUsed || me.mana < pw.cost;
+  const powerBtn = (style) => (
+    <button className="dx-btn" disabled={powerDisabled} onClick={g.handlePower} style={{ display: "flex", alignItems: "center", gap: 10 * u, textAlign: "left", padding: 8 * u, ...style }} title={pw.desc}>
+      <span className="dx-badge dx-badge-cost" style={{ position: "relative", width: 44 * u, height: 44 * u, fontSize: 24 * u, flexShrink: 0 }}>{pw.cost}</span>
+      <span style={{ minWidth: 0, flex: 1 }}>
+        <span style={{ display: "block", fontSize: (pw.name.length > 7 ? 16 : 19) * u, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{pw.name}{me.powerUsed ? " ✓" : ""}</span>
+        <span style={{ display: "block", fontFamily: DX_FONT, textTransform: "none", letterSpacing: 0, fontWeight: 500, fontSize: 12.5 * u, lineHeight: 1.15, color: "#d8d2c4", marginTop: 2 * u }}>{pw.desc}</span>
+      </span>
+    </button>
+  );
+
+  const logLines = (state.log || []).map((l) => (typeof l === "string" ? { text: l, warn: false } : l));
+  const menuPanel = menuOpen && (
+    <div className="dx-panel dx-pop" style={{ position: "absolute", right: 14, top: portrait ? 132 : 66, zIndex: 150, padding: 12 * u, display: "flex", flexDirection: "column", gap: 10 * u, minWidth: 210 * u }}>
+      {!g.isCpuMatch && <button className="dx-btn" style={{ fontSize: 17 * u }} onClick={() => { setMenuOpen(false); g.onSync(); }} title="Force-refresh the game state">Sync</button>}
+      <button className="dx-btn" style={{ fontSize: 17 * u }} onClick={() => { setMenuOpen(false); setLogOpen(true); }}>Battle log</button>
+      <button className="dx-btn" style={{ fontSize: 17 * u }} onClick={cycleBoard}>Board: {boardDef.name}</button>
+      <button className="dx-btn dx-btn-danger" style={{ fontSize: 17 * u }} onClick={() => { setMenuOpen(false); g.setConfirmConcede(true); }}>Concede</button>
+      <button className="dx-btn" style={{ fontSize: 15 * u }} onClick={() => setMenuOpen(false)}>Close</button>
+    </div>
+  );
+  const menuBtn = (style) => <button className="dx-btn" style={{ fontSize: 17 * u, ...style }} onClick={() => setMenuOpen((v) => !v)}>☰ Menu</button>;
+
+  const toasts = (
+    <div style={{ display: "flex", flexDirection: "column", alignItems: "center", gap: 8, pointerEvents: "none" }}>
+      {pending && (
+        <div className="dx-panel" style={{ padding: `${8 * u}px ${16 * u}px`, fontSize: 18 * u, display: "flex", alignItems: "center", gap: 14 * u, pointerEvents: "auto", borderColor: "#ff5a48" }}>
+          <span className="dx-display" style={{ fontWeight: 800, color: "#ffb0a6" }}>Choose a target</span>
+          <button className="dx-btn" style={{ fontSize: 15 * u }} onClick={g.cancelPending}>Cancel</button>
+        </div>
+      )}
+      {attacker && !pending && <div className="dx-panel" style={{ padding: `${6 * u}px ${14 * u}px`, fontSize: 15 * u, color: "#ffe27a" }}>Now tap an enemy to attack — or tap your minion again to cancel.</div>}
+      {g.notice && <div className="dx-panel dx-pop" style={{ padding: `${8 * u}px ${16 * u}px`, fontSize: 16 * u, color: "#ffd0c9", borderColor: "#b72a20" }}>{g.notice}</div>}
+      {g.actionError && <div className="dx-panel" style={{ padding: `${8 * u}px ${16 * u}px`, fontSize: 16 * u, color: "#ffd0c9", borderColor: "#b72a20" }}>{g.actionError}</div>}
+      {g.showOpponentIdleNote && <div className="dx-panel" style={{ padding: `${6 * u}px ${14 * u}px`, fontSize: 14 * u, color: "#ffb0a6" }}>Opponent has been idle a while — waiting for them to respond or time out...</div>}
+    </div>
+  );
+
+  const hand = (availW, hs, bottom, fan) => {
+    const n = me.hand.length;
+    const cw = DX_CARD_W * hs;
+    const step = n > 1 ? Math.min(cw + 10, (availW - cw) / (n - 1)) : 0;
+    const total = cw + step * (n - 1);
+    const x0 = (availW - total) / 2;
+    return me.hand.map((cardId, i) => {
+      const c = findCard(cardId);
+      const disabled = !myTurn || c.cost > me.mana || (c.type === "minion" && g.boardFull);
+      const off = i - (n - 1) / 2;
+      return (
+        <DxHandCard
+          key={i} card={c} scale={hs} disabled={disabled} playable={!disabled && state.winner === null} inspectOnly={!myTurn || c.cost > me.mana}
+          onClick={() => g.handleCardClick(i)}
+          style={{ left: x0 + i * step, bottom, zIndex: 20 + i, "--rot": fan ? `${off * Math.min(3, 16 / Math.max(1, n))}deg` : "0deg", "--ty": fan ? `${off * off * 1.3}px` : "0px", "--lift": "-14px", "--hs": fan ? 1.32 : 1.12 }}
+        />
+      );
+    });
+  };
+
+  /* ----- modals (shared by both layouts) ----- */
+  const bigCardScale = portrait ? Math.min(2.1, (W - 150) / DX_CARD_W, (H - 420) / DX_CARD_H) : Math.min(1.5, (H - 260) / DX_CARD_H);
+  const rowCardScale = (count) => Math.min(portrait ? 0.95 : 1, (W - (portrait ? 240 : 150) - (count - 1) * 16) / Math.max(1, Math.min(count, portrait ? 3 : 5)) / DX_CARD_W);
+  const modals = (
+    <>
+      {g.confirmingIdx !== null && me.hand[g.confirmingIdx] && (
+        <DxModal z={160} onBackdrop={() => g.setConfirmingIdx(null)}>
+          <div style={{ display: "flex", justifyContent: "center", marginBottom: 22 * u, padding: 12 }}><DeluxeCard card={findCard(me.hand[g.confirmingIdx])} scale={bigCardScale} tilt /></div>
+          <div className="dx-display" style={{ fontSize: 22 * u, fontWeight: 800, marginBottom: 16 * u }}>Play this card?</div>
+          <div style={{ display: "flex", gap: 16 * u, justifyContent: "center" }}>
+            <button className="dx-btn dx-btn-go" style={{ fontSize: 22 * u, minWidth: 130 * u }} onClick={() => g.confirmPlayCard(g.confirmingIdx)}>Play</button>
+            <button className="dx-btn" style={{ fontSize: 22 * u, minWidth: 130 * u }} onClick={() => g.setConfirmingIdx(null)}>Cancel</button>
+          </div>
+        </DxModal>
+      )}
+      {logOpen && (
+        <DxModal z={170} onBackdrop={() => setLogOpen(false)} maxWidth={Math.min(W - 40, 760)}>
+          <div className="dx-display" style={{ fontSize: 24 * u, fontWeight: 800, marginBottom: 12 * u }}>Battle log</div>
+          <div className="dx-scroll" style={{ textAlign: "left", fontSize: 15 * u, lineHeight: 1.45, maxHeight: H * 0.6, overflowY: "auto", minWidth: Math.min(W - 120, 520) }}>
+            {logLines.map((l, i) => <div key={i} style={{ color: l.warn ? "#ff8d80" : "#e8e2d4", fontWeight: l.warn ? 700 : 400 }}>{l.text}</div>)}
+          </div>
+          <button className="dx-btn" style={{ fontSize: 18 * u, marginTop: 16 * u }} onClick={() => setLogOpen(false)}>Close</button>
+        </DxModal>
+      )}
+      {g.confirmConcede && (
+        <DxModal z={180} onBackdrop={() => g.setConfirmConcede(false)}>
+          <div className="dx-display" style={{ fontSize: 24 * u, fontWeight: 800 }}>Concede this game?</div>
+          <div style={{ fontSize: 16 * u, color: "#c9c2b3", margin: `${8 * u}px 0 ${18 * u}px` }}>You will lose.</div>
+          <div style={{ display: "flex", gap: 16 * u, justifyContent: "center" }}>
+            <button className="dx-btn dx-btn-danger" style={{ fontSize: 20 * u }} onClick={() => { g.setConfirmConcede(false); g.onConcede(); }}>Yes, concede</button>
+            <button className="dx-btn" style={{ fontSize: 20 * u }} onClick={() => g.setConfirmConcede(false)}>No</button>
+          </div>
+        </DxModal>
+      )}
+      {g.showIdleWarning && (
+        <DxModal z={190}>
+          <div className="dx-display" style={{ fontSize: 26 * u, fontWeight: 800, color: "#ffb0a6" }}>Are you still there?</div>
+          <div style={{ fontSize: 17 * u, marginTop: 10 * u }}>Confirm within {Math.max(0, Math.ceil((120000 - g.turnElapsed) / 1000))}s or you'll lose the game.</div>
+          <div style={{ fontSize: 14 * u, marginTop: 6 * u, color: "#a8a295" }}>Confirming will end your current turn.</div>
+          <button className="dx-btn dx-btn-go" style={{ fontSize: 22 * u, marginTop: 18 * u }} onClick={() => onAction({ type: "endTurn" })}>I'm here</button>
+        </DxModal>
+      )}
+      {g.showMulligan && (
+        <DxModal z={195}>
+          <div className="dx-display" style={{ fontSize: 30 * u, fontWeight: 800 }}>Mulligan</div>
+          <div style={{ fontSize: 16 * u, marginTop: 6 * u, color: "#d8d2c4" }}>Pick up to {g.MULLIGAN_MAX} cards to shuffle back into your deck and redraw. Tap a card to select it.</div>
+          <div className="dx-display" style={{ fontSize: 18 * u, marginTop: 6 * u, fontWeight: 800, color: "#ff8d80" }}>{Math.max(0, Math.ceil((15000 - g.mulliganElapsed) / 1000))}s to decide</div>
+          <div style={{ display: "flex", gap: 16, justifyContent: "center", flexWrap: "wrap", marginTop: 20 * u, padding: 10 }}>
+            {me.hand.map((cardId, i) => {
+              const selected = g.mulliganSelected.includes(i);
+              const capReached = !selected && g.mulliganSelected.length >= g.MULLIGAN_MAX;
+              return (
+                <div key={i} onClick={() => g.toggleMulliganCard(i)} style={{ position: "relative", cursor: capReached ? "default" : "pointer", opacity: capReached ? 0.5 : 1 }}>
+                  <DeluxeCard card={findCard(cardId)} scale={rowCardScale(me.hand.length)} />
+                  {selected && (
+                    <div style={{ position: "absolute", inset: 0, background: "rgba(200,40,25,0.45)", border: "5px solid #ff5a48", borderRadius: 16, display: "flex", alignItems: "center", justifyContent: "center" }}>
+                      <span style={{ fontSize: 80, fontWeight: 800, color: "#fff", textShadow: "0 0 8px #000" }}>↺</span>
+                    </div>
+                  )}
+                </div>
+              );
+            })}
+          </div>
+          <button className="dx-btn dx-btn-go" style={{ fontSize: 22 * u, marginTop: 20 * u }} onClick={g.confirmMulligan}>Confirm ({g.mulliganSelected.length} to shuffle)</button>
+        </DxModal>
+      )}
+      {state.pendingDiscover && state.pendingDiscover.playerIdx === myIdx && (
+        <DxModal z={196}>
+          <div className="dx-display" style={{ fontSize: 30 * u, fontWeight: 800 }}>Choose a card</div>
+          <div style={{ fontSize: 16 * u, marginTop: 6 * u, color: "#d8d2c4" }}>Pick one to add to your hand.</div>
+          <div style={{ display: "flex", gap: 16, justifyContent: "center", flexWrap: "wrap", marginTop: 20 * u, padding: 10 }}>
+            {state.pendingDiscover.options.map((cardId, i) => (
+              <div key={i} onClick={() => g.setDiscoverSelected(cardId)} style={{ cursor: "pointer" }}>
+                <DeluxeCard card={findCard(cardId)} scale={rowCardScale(state.pendingDiscover.options.length)} selected={g.discoverSelected === cardId} tilt />
+              </div>
+            ))}
+          </div>
+          <button className="dx-btn dx-btn-go" style={{ fontSize: 22 * u, marginTop: 20 * u }} disabled={g.discoverSelected === null} onClick={() => onAction({ type: "discoverChoice", cardId: g.discoverSelected })}>Confirm</button>
+        </DxModal>
+      )}
+      {state.winner !== null && (() => {
+        const iWon = state.winner === myIdx;
+        const losingHero = state.players[state.winner === 0 ? 1 : 0].hero;
+        const gif = HERO_LOSE_GIF_OVERRIDES[losingHero];
+        const box = Math.min(portrait ? 440 : 320, W - 160);
+        return (
+          <DxModal z={210}>
+            <div className="dx-display dx-title3d" style={{ fontSize: 68 * u, fontWeight: 900, lineHeight: 1, color: iWon ? "#ffd75e" : "#ff6a5a", textShadow: iWon ? "0 2px 0 #a14c06,0 4px 0 #7a3a04,0 6px 0 #4a2302,0 12px 22px rgba(0,0,0,0.8)" : "0 2px 0 #7a140c,0 4px 0 #570d07,0 6px 0 #330603,0 12px 22px rgba(0,0,0,0.8)" }}>{iWon ? "Victory" : "Defeat"}</div>
+            <div style={{ fontSize: 16 * u, color: "#c9c2b3", marginTop: 10 * u }}>{losingHero} falls in the wasteland.</div>
+            <div style={{ width: box, height: box, margin: `${18 * u}px auto 0`, borderRadius: 14, padding: 6, background: (iWon ? DX_RARITY.unique : DX_RARITY.common).frame, boxShadow: "0 10px 24px rgba(0,0,0,0.7)" }}>
+              <div style={{ width: "100%", height: "100%", borderRadius: 9, overflow: "hidden", background: "#111", display: "flex", alignItems: "center", justifyContent: "center" }}>
+                {gif ? (gif.startsWith("data:video") ? <video src={gif} autoPlay loop muted playsInline style={{ width: "100%", height: "100%", objectFit: "cover" }} /> : <img src={gif} alt={`${losingHero} defeated`} style={{ width: "100%", height: "100%", objectFit: "cover" }} />) : <span style={{ fontSize: 14 * u, color: "#888" }}>{losingHero} defeated</span>}
+              </div>
+            </div>
+            <button className="dx-btn dx-btn-go" style={{ fontSize: 22 * u, marginTop: 22 * u }} onClick={g.onBackToMenu}>Back to Menu</button>
+          </DxModal>
+        );
+      })()}
+    </>
+  );
+
+  const overlays = (
+    <>
+      {banner && state.winner === null && (
+        <div key={banner.id} style={{ position: "absolute", left: 0, right: 0, top: "42%", display: "flex", justifyContent: "center", pointerEvents: "none", zIndex: 120, overflow: "hidden" }}>
+          <div className="dx-banner dx-display" style={{ padding: `${10 * u}px ${(portrait ? 40 : 70) * u}px`, fontSize: portrait ? 64 : 54, whiteSpace: "nowrap", fontWeight: 900, color: banner.mine ? "#2a1300" : "#fff", background: banner.mine ? "linear-gradient(180deg,#ffe27a,#e88f1c)" : "linear-gradient(180deg,#d9453a,#7a140c)", border: "4px solid #0b0b0b", boxShadow: "0 10px 30px rgba(0,0,0,0.7)" }}>
+            <span style={{ display: "inline-block", transform: "skewX(14deg)" }}>{banner.mine ? "Your turn" : "Enemy turn"}</span>
+          </div>
+        </div>
+      )}
+      {reveals.length > 0 && (
+        <div style={{ position: "absolute", inset: 0, display: "flex", alignItems: "center", justifyContent: "center", pointerEvents: "none", zIndex: 130 }}>
+          <div key={reveals[0].id} className="dx-reveal" style={{ "--from": reveals[0].enemy ? "-300px" : "300px", filter: `drop-shadow(0 0 30px ${(DX_RARITY[reveals[0].card.rarity] || DX_RARITY.common).glow})` }}>
+            <DeluxeCard card={reveals[0].card} scale={portrait ? 1.5 : 1.25} />
+          </div>
+        </div>
+      )}
+    </>
+  );
+
+  const matFrame = { borderRadius: 22, background: "rgba(0,0,0,0.22)", border: `3px solid rgba(0,0,0,0.6)`, boxShadow: `inset 0 0 0 2px ${boardDef.accent}55, inset 0 0 60px rgba(0,0,0,0.55), 0 12px 30px rgba(0,0,0,0.5)` };
+  const divider = (h) => (
+    <div style={{ height: h, display: "flex", alignItems: "center", gap: 14, padding: "0 26px" }}>
+      <div style={{ flex: 1, height: 3, background: `linear-gradient(90deg,transparent,${boardDef.accent}aa)` }} />
+      <svg viewBox="-12 -12 24 24" width={h * 0.8} height={h * 0.8} style={{ opacity: 0.85 }}>
+        <circle r="11" fill={boardDef.accent} stroke="#111" strokeWidth="1" /><circle r="2" fill="#111" />
+        {[0, 120, 240].map((a) => <path key={a} transform={`rotate(${a})`} d="M-1.9 -3.3A3.8 3.8 0 0 1 1.9 -3.3L4.7 -8.2A9.5 9.5 0 0 0 -4.7 -8.2Z" fill="#111" />)}
+      </svg>
+      <div style={{ flex: 1, height: 3, background: `linear-gradient(270deg,transparent,${boardDef.accent}aa)` }} />
+    </div>
+  );
+
+  let body;
+  if (!portrait) {
+    /* ================= landscape (desktop 16:9 / 16:10, tablets) ================= */
+    const pad = 16, colL = 272, colR = 182, handH = 268;
+    const matX = pad + colL + pad, matW = W - matX - colR - pad * 2;
+    const matY = 14, matH = H - handH - matY - 8;
+    const divH = 34, laneH = (matH - divH) / 2;
+    const plateH = 158, powerH = 84;
+    const hs = 0.74;
+    body = (
+      <>
+        {/* left column: both heroes, the log, the hero power */}
+        <div style={{ position: "absolute", left: pad, top: matY, width: colL, height: plateH }}>
+          <DxHeroPlate player={opp} side="opp" u={1} targetable={oppHeroTargetable} attackable={g.canAttackEnemyHero} onClick={() => g.handleHeroClick(true, oppIdx)} />
+        </div>
+        <div style={{ position: "absolute", left: pad, top: matY + plateH + 12, width: colL, display: "flex", height: 70, alignItems: "center", paddingLeft: 6 }}>
+          {Array.from({ length: opp.hand.length }).map((_, i) => <div key={i} style={{ marginLeft: i ? -Math.max(14, Math.min(26, (opp.hand.length - 4) * 4 + 14)) : 0 }}><DeluxeCardBack w={44} /></div>)}
+        </div>
+        <div className="dx-panel dx-scroll" ref={g.logRef} style={{ position: "absolute", left: pad, top: matY + plateH + 94, width: colL, bottom: plateH + powerH + 14 + 24, padding: "8px 10px", overflowY: "auto", fontSize: 12.5, lineHeight: 1.4 }}>
+          {logLines.slice(-14).map((l, i) => <div key={i} style={{ color: l.warn ? "#ff8d80" : "#d8d2c4", fontWeight: l.warn ? 700 : 400 }}>{l.text}</div>)}
+        </div>
+        <div style={{ position: "absolute", left: pad, bottom: plateH + 14 + 12, width: colL, height: powerH }}>{powerBtn({ width: "100%", height: "100%" })}</div>
+        <div style={{ position: "absolute", left: pad, bottom: 14, width: colL, height: plateH }}>
+          <DxHeroPlate player={me} side="me" u={1} targetable={pending && pending.needsTarget === "any"} onClick={() => g.handleHeroClick(false, myIdx)} />
+        </div>
+
+        {/* the table */}
+        <div className="dx-mat3d" style={{ position: "absolute", left: matX, top: matY, width: matW, height: matH, ...matFrame }}>
+          {renderLane(g.oppBoardWithGhosts, true, matW, laneH, 1)}
+          {divider(divH)}
+          {renderLane(g.meBoardWithGhosts, false, matW, laneH, 1)}
+        </div>
+        <div style={{ position: "absolute", left: matX, width: matW, top: matY + 18, zIndex: 110, pointerEvents: "none" }}>{toasts}</div>
+
+        {/* right column: menu, end turn */}
+        <div style={{ position: "absolute", right: pad, top: matY, width: colR }}>{menuBtn({ width: "100%" })}</div>
+        <div style={{ position: "absolute", right: pad, top: matY + matH / 2 - 60, width: colR, height: 120 }}>{endTurnBtn({ width: "100%", height: "100%" })}</div>
+        <div style={{ position: "absolute", right: pad, bottom: 20, width: colR, display: "flex", flexDirection: "column", alignItems: "center", gap: 6 }}>
+          <div style={{ position: "relative", width: 76, height: 104 }}>
+            {[2, 1, 0].map((k) => <div key={k} style={{ position: "absolute", left: k * 3, top: -k * 3 }}>{me.deck.length > k * 8 && <DeluxeCardBack w={70} />}</div>)}
+          </div>
+          <div className="dx-display" style={{ fontSize: 15, fontWeight: 800, color: "#e8e2d4", textShadow: "0 1px 3px #000" }}>Your deck: {me.deck.length}</div>
+        </div>
+
+        {/* hand */}
+        <div style={{ position: "absolute", left: matX, width: matW, bottom: 0, height: handH, zIndex: 90, pointerEvents: "none" }}>
+          <div style={{ position: "relative", width: matW - 70, margin: "0 auto", height: "100%", pointerEvents: "auto" }}>{hand(matW - 70, hs, 20, true)}</div>
+        </div>
+      </>
+    );
+  } else {
+    /* ================= portrait (phone held upright) ================= */
+    const pad = 12, gap = 8, barH = 140, stripH = 84, handH = 232;
+    const laneW = W - pad * 2;
+    const laneH = (H - pad * 2 - barH * 2 - stripH - handH - gap * 5) / 2;
+    const hs = Math.min(0.64, (laneW - 6) / 4.4 / DX_CARD_W);
+    const lastLog = logLines.length ? logLines[logLines.length - 1] : null;
+    body = (
+      <div style={{ position: "absolute", inset: 0, padding: pad, display: "flex", flexDirection: "column", gap }}>
+        <div style={{ height: barH, flexShrink: 0 }}>
+          <DxHeroPlate player={opp} side="opp" u={1.3} portraitSize={82} wide targetable={oppHeroTargetable} attackable={g.canAttackEnemyHero} onClick={() => g.handleHeroClick(true, oppIdx)}>
+            <div style={{ display: "flex", flexDirection: "column", alignItems: "flex-end", gap: 8, flexShrink: 0 }} onClick={(e) => e.stopPropagation()}>
+              {menuBtn({ fontSize: 22 })}
+              <div style={{ display: "flex", alignItems: "center", gap: 6, fontSize: 20, fontWeight: 700 }}><DeluxeCardBack w={30} />× {opp.hand.length}</div>
+            </div>
+          </DxHeroPlate>
+        </div>
+        <div style={{ ...matFrame, flexShrink: 0 }}>
+          {renderLane(g.oppBoardWithGhosts, true, laneW, laneH, 2)}
+        </div>
+        <div style={{ height: stripH, flexShrink: 0, display: "flex", gap: 10, alignItems: "stretch" }}>
+          <button className="dx-panel" onClick={() => setLogOpen(true)} style={{ flex: 1, minWidth: 0, padding: "6px 14px", textAlign: "left", fontFamily: DX_FONT, fontSize: 19, lineHeight: 1.2, color: lastLog && lastLog.warn ? "#ff8d80" : "#d8d2c4", cursor: "pointer", overflow: "hidden", display: "flex", alignItems: "center" }}>
+            <span style={{ display: "-webkit-box", WebkitLineClamp: 2, WebkitBoxOrient: "vertical", overflow: "hidden" }}>{lastLog ? lastLog.text : "Battle log"}</span>
+          </button>
+          {endTurnBtn({ width: 250, flexShrink: 0 })}
+        </div>
+        <div style={{ ...matFrame, flexShrink: 0 }}>
+          {renderLane(g.meBoardWithGhosts, false, laneW, laneH, 2)}
+        </div>
+        <div style={{ height: barH, flexShrink: 0, display: "flex", gap: 10 }}>
+          <div style={{ flex: 1, minWidth: 0 }}>
+            <DxHeroPlate player={me} side="me" u={1.3} portraitSize={82} targetable={pending && pending.needsTarget === "any"} onClick={() => g.handleHeroClick(false, myIdx)} />
+          </div>
+          {powerBtn({ width: 268, flexShrink: 0 })}
+        </div>
+        <div style={{ height: handH, flexShrink: 0, position: "relative", margin: "0 8px" }}>{hand(laneW - 16, hs, 16, false)}</div>
+        <div style={{ position: "absolute", left: pad, right: pad, top: pad + barH + gap + 10, zIndex: 110, pointerEvents: "none" }}>{toasts}</div>
+      </div>
+    );
+  }
+
+  return (
+    <div className="dx-root" ref={rootRef} style={{ position: "fixed", left: 0, top: 0, width: W, height: H, transform: `scale(${scale})`, transformOrigin: "0 0", overflow: "hidden", zIndex: 40 }}>
+      <DeluxeBackdrop styleId={display.board} />
+      {body}
+      {menuPanel}
+      {overlays}
+      {modals}
+    </div>
+  );
+}
+
+function DxHandCard({ card, scale, disabled, playable, inspectOnly, onClick, style }) {
+  const [showDetail, setShowDetail] = useState(false);
+  const pressTimer = useRef(null);
+  const longPressFired = useRef(false);
+  const startPress = () => {
+    longPressFired.current = false;
+    pressTimer.current = setTimeout(() => { longPressFired.current = true; setShowDetail(true); }, 550);
+  };
+  const cancelPress = () => { if (pressTimer.current) { clearTimeout(pressTimer.current); pressTimer.current = null; } };
+  return (
+    <>
+      <div
+        className="dx-handcard" style={style}
+        onClick={(e) => { if (longPressFired.current) { longPressFired.current = false; e.stopPropagation(); return; } if (inspectOnly) { setShowDetail(true); return; } onClick(); }}
+        onContextMenu={(e) => { e.preventDefault(); e.stopPropagation(); setShowDetail(true); }}
+        onMouseDown={startPress} onMouseUp={cancelPress} onMouseLeave={cancelPress}
+        onTouchStart={startPress} onTouchEnd={cancelPress} onTouchMove={cancelPress}
+      >
+        <DeluxeCard card={card} scale={scale} dim={disabled} playable={playable} tilt />
+      </div>
+      {showDetail && <DeluxeCardDetail card={card} onClose={() => setShowDetail(false)} />}
+    </>
+  );
+}
+
 function MiniCard({ cardId, onClick, disabled, small, allowDetail }) {
   const c = findCard(cardId);
   const r = RARITY_STYLE[c.rarity];
@@ -1205,6 +2642,8 @@ function MiniCard({ cardId, onClick, disabled, small, allowDetail }) {
   const [showDetail, setShowDetail] = useState(false);
   const pressTimer = useRef(null);
   const longPressFired = useRef(false);
+  const displayMode = useDisplay().mode;
+  const noArt = displayMode === "noart";
 
   const startPress = () => {
     if (!allowDetail) return;
@@ -1231,6 +2670,30 @@ function MiniCard({ cardId, onClick, disabled, small, allowDetail }) {
     e.stopPropagation();
     setShowDetail(true);
   };
+
+  // Full Graphics: same clicks and long-press as below, drawn as a full-colour card.
+  if (displayMode === "deluxe") {
+    return (
+      <>
+        <div
+          className="dx-root"
+          onClick={handleClick}
+          onContextMenu={handleContextMenu}
+          onMouseDown={startPress}
+          onMouseUp={cancelPress}
+          onMouseLeave={cancelPress}
+          onTouchStart={startPress}
+          onTouchEnd={cancelPress}
+          onTouchMove={cancelPress}
+          style={{ cursor: disabled ? "default" : "pointer", padding: 6 }}
+          title={c.text || c.name}
+        >
+          <DeluxeCard card={c} scale={small ? 0.6 : 0.72} dim={disabled} tilt />
+        </div>
+        {showDetail && <CardDetailModal card={c} onClose={() => setShowDetail(false)} />}
+      </>
+    );
+  }
 
   return (
     <>
@@ -1260,7 +2723,7 @@ function MiniCard({ cardId, onClick, disabled, small, allowDetail }) {
         </div>
       </div>
       <div style={{ marginTop: 1, flexShrink: 0 }}><CardArt card={c} size={small ? 36 : 48} /></div>
-      {c.text && <div style={{ marginTop: 1, width: "100%", flexShrink: 0 }}><AutoScrollText text={c.text} height={small ? 46 : 56} fontSize={small ? 8 : 8.5} duration={10} bold /></div>}
+      {c.text && <div style={{ marginTop: 1, width: "100%", flexShrink: 0 }}><AutoScrollText text={c.text} height={(small ? 46 : 56) + (noArt ? (small ? 36 : 48) : 0)} fontSize={noArt ? (small ? 9 : 10) : (small ? 8 : 8.5)} duration={10} bold /></div>}
       <div style={{ marginTop: "auto", flexShrink: 0, display: "flex", justifyContent: "space-between", width: "100%", height: small ? 16 : 18 }}>
         {c.type === "spell" ? (
           <span style={{ margin: "auto", fontSize: small ? 8 : 9, fontWeight: 700, letterSpacing: 1 }}>ITEM</span>
@@ -1290,6 +2753,8 @@ function cardLikeForMinion(m) {
 
 function CardDetailModal({ card, onClose }) {
   const r = RARITY_STYLE[card.rarity];
+  const displayMode = useDisplay().mode;
+  if (displayMode === "deluxe") return <DeluxeCardDetail card={card} onClose={onClose} />;
   return (
     <div style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.45)", display: "flex", alignItems: "center", justifyContent: "center", zIndex: 100 }} onClick={onClose}>
       <div
@@ -1303,7 +2768,7 @@ function CardDetailModal({ card, onClose }) {
           {card.cost !== null && <div style={{ fontSize: 15, fontWeight: 700, border: "1px solid #000", borderRadius: 4, minWidth: 22, padding: "1px 3px" }}>{card.cost}</div>}
           <div style={{ fontSize: 14, fontWeight: 700 }}>{card.name}</div>
         </div>
-        <div style={{ display: "flex", justifyContent: "center", marginBottom: 10 }}><CardArt card={card} size={270} /></div>
+        {displayMode !== "noart" && <div style={{ display: "flex", justifyContent: "center", marginBottom: 10 }}><CardArt card={card} size={270} /></div>}
         {card.text && <div style={{ fontSize: 12, lineHeight: 1.4, color: "#333", marginBottom: 10 }}>{card.text}</div>}
         {card.type !== "spell" && (
           <div style={{ display: "flex", justifyContent: "center", gap: 24, marginBottom: 12, fontSize: 16, fontWeight: 700 }}>
@@ -1322,6 +2787,7 @@ function BoardMinion({ m, onClick, selected, targetable, isEnemy }) {
   const cardDef = m.cardId ? findCard(m.cardId) : null;
   const rarity = cardDef ? cardDef.rarity : "common";
   const rStyle = RARITY_STYLE[rarity];
+  const noArt = useDisplay().mode === "noart";
   const [showDetail, setShowDetail] = useState(false);
   const pressTimer = useRef(null);
   const longPressFired = useRef(false);
@@ -1370,7 +2836,7 @@ function BoardMinion({ m, onClick, selected, targetable, isEnemy }) {
           {m.keywords.includes("Taunt") && <div style={{ fontSize: 8, background: "#000", color: "#fff", padding: "0 3px", borderRadius: 3, whiteSpace: "nowrap" }}>TAUNT</div>}
         </div>
         <CardArt card={m.cardId ? findCard(m.cardId) : { name: m.name, id: m.name }} size={46} />
-        <div style={{ fontSize: 7, textAlign: "center", marginTop: 1, lineHeight: 1.05, height: 15, overflow: "hidden" }}>{m.name}</div>
+        <div style={noArt ? { fontSize: 9.5, fontWeight: 700, textAlign: "center", marginTop: 6, lineHeight: 1.1, height: 44, overflow: "hidden", display: "flex", alignItems: "center", justifyContent: "center" } : { fontSize: 7, textAlign: "center", marginTop: 1, lineHeight: 1.05, height: 15, overflow: "hidden" }}>{m.name}</div>
         {(m.frozen || m.keywords.includes("Toxic")) && (
           <div style={{ display: "flex", flexDirection: "column", alignItems: "center", gap: 1, marginTop: 1 }}>
             {m.frozen && <div style={{ fontSize: 6.5, lineHeight: 1, background: "#dbeeff", border: "1px solid #2a6ebb", padding: "0 3px", borderRadius: 3, whiteSpace: "nowrap" }}>FROZEN</div>}
@@ -1391,6 +2857,7 @@ function HeroPanel({ player, isEnemy, targetable, attackable, onClick, bgColor }
   const highlighted = targetable || attackable;
   const hpFrac = Math.max(0, Math.min(1, player.health / player.maxHealth));
   const barH = 58;
+  const hideArt = useDisplay().mode === "noart";
   const redH = Math.round(barH * (1 - hpFrac));
   const greenH = barH - redH;
   return (
@@ -1433,7 +2900,7 @@ function HeroPanel({ player, isEnemy, targetable, attackable, onClick, bgColor }
           })}
         </div>
       </div>
-      <div style={{ width: 50, height: 50, minWidth: 50, border: "1px solid #000", borderRadius: 6, background: "rgba(255,255,255,0.55)", display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0, overflow: "hidden" }}>
+      <div style={{ width: 50, height: 50, minWidth: 50, border: "1px solid #000", borderRadius: 6, background: "rgba(255,255,255,0.55)", display: hideArt ? "none" : "flex", alignItems: "center", justifyContent: "center", flexShrink: 0, overflow: "hidden" }}>
         {HERO_ART_OVERRIDES[player.hero] ? (
           <img src={HERO_ART_OVERRIDES[player.hero]} alt={player.hero} style={{ width: "100%", height: "100%", objectFit: "cover" }} />
         ) : (
@@ -2005,7 +3472,8 @@ function RulesModal({ onClose }) {
   );
 }
 
-function HeroSelectScreen({ onPick, onBuildDeck, onPlayCpu, onShowLeaderboard, onShowQuests, onShowShop, myProfile, myLegendaryRank, customDecks }) {
+function HeroSelectScreen({ onPick, onBuildDeck, onPlayCpu, onShowLeaderboard, onShowQuests, onShowShop, onShowSettings, myProfile, myLegendaryRank, customDecks }) {
+  const hideArt = useDisplay().mode === "noart";
   const [hero, setHero] = useState(null);
   const [showRules, setShowRules] = useState(false);
   const [lockedHeroClicked, setLockedHeroClicked] = useState(null);
@@ -2030,6 +3498,7 @@ function HeroSelectScreen({ onPick, onBuildDeck, onPlayCpu, onShowLeaderboard, o
           <button onClick={onShowLeaderboard} style={{ fontFamily: FONT, fontSize: 11, border: "none", background: "none", color: "#555", textDecoration: "underline", cursor: "pointer" }}>Leaderboard</button>
           <button onClick={onShowQuests} style={{ fontFamily: FONT, fontSize: 11, border: "none", background: "none", color: "#555", textDecoration: "underline", cursor: "pointer" }}>Quests</button>
           <button onClick={() => setShowRules(true)} style={{ fontFamily: FONT, fontSize: 11, border: "none", background: "none", color: "#555", textDecoration: "underline", cursor: "pointer" }}>Check Rules</button>
+          <button onClick={onShowSettings} style={{ fontFamily: FONT, fontSize: 11, border: "none", background: "none", color: "#555", textDecoration: "underline", cursor: "pointer" }}>Settings</button>
         </div>
         <p style={{ fontSize: 13, color: "#333", marginTop: 8 }}>Pick a survivor and choose game mode.</p>
       </div>
@@ -2050,7 +3519,7 @@ function HeroSelectScreen({ onPick, onBuildDeck, onPlayCpu, onShowLeaderboard, o
           >
             {locked && <div style={{ position: "absolute", top: 4, left: 4, fontSize: 8, background: "#c0392b", color: "#fff", padding: "1px 4px", borderRadius: 3, fontWeight: 700 }}>LOCKED</div>}
             {customDecks && customDecks[h] && !locked && <div style={{ position: "absolute", top: 4, right: 4, fontSize: 8, background: "#000", color: "#fff", padding: "1px 4px", borderRadius: 3 }}>CUSTOM</div>}
-            <div style={{ width: 50, height: 50, minWidth: 50, border: "1px solid #000", borderRadius: 6, background: "rgba(255,255,255,0.55)", display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0, overflow: "hidden" }}>
+            <div style={{ width: 50, height: 50, minWidth: 50, border: "1px solid #000", borderRadius: 6, background: "rgba(255,255,255,0.55)", display: hideArt ? "none" : "flex", alignItems: "center", justifyContent: "center", flexShrink: 0, overflow: "hidden" }}>
               {HERO_ART_OVERRIDES[h] ? (
                 <img src={HERO_ART_OVERRIDES[h]} alt={h} style={{ width: "100%", height: "100%", objectFit: "cover" }} />
               ) : (
@@ -2313,6 +3782,7 @@ function GameScreen({ state, myIdx, onAction, onConcede, actionError, onSync, on
   const me = state.players[myIdx];
   const opp = state.players[myIdx === 0 ? 1 : 0];
   const myTurn = state.turn === myIdx;
+  const display = useDisplay();
   const [pending, setPending] = useState(null); // {kind:'card'|'power', idx?, needsTarget}
   const [attacker, setAttacker] = useState(null); // uid of selected attacking minion
   const [confirmingIdx, setConfirmingIdx] = useState(null); // hand index awaiting Yes/No confirmation
@@ -2453,6 +3923,21 @@ function GameScreen({ state, myIdx, onAction, onConcede, actionError, onSync, on
     setPending(null);
   }
 
+  // Full Graphics draws this same match with its own layout. Every value and
+  // handler it needs is handed over here, so the rules live in one place.
+  if (display.mode === "deluxe") {
+    return (
+      <DeluxeGame g={{
+        state, me, opp, myIdx, myTurn, pending, attacker, onAction, onConcede, onSync, onBackToMenu, isCpuMatch, actionError, notice, logRef,
+        confirmingIdx, setConfirmingIdx, confirmConcede, setConfirmConcede,
+        showMulligan, mulliganSelected, mulliganElapsed, MULLIGAN_MAX, toggleMulliganCard, confirmMulligan,
+        discoverSelected, setDiscoverSelected, showIdleWarning, showOpponentIdleNote, turnElapsed,
+        oppBoardWithGhosts, meBoardWithGhosts, canAttackEnemyHero, boardFull,
+        handleCardClick, confirmPlayCard, handlePower, handleMinionClick, handleHeroClick, cancelPending,
+      }} />
+    );
+  }
+
   return (
     <div style={{ fontFamily: FONT, padding: 12, maxWidth: 900, margin: "0 auto" }}>
       {state.winner !== null && (() => {
@@ -2466,7 +3951,8 @@ function GameScreen({ state, myIdx, onAction, onConcede, actionError, onSync, on
                 {iWon ? "YOU WIN" : "YOU LOST"}
               </h1>
               <div style={{ fontSize: 11, color: "#666", marginTop: 4 }}>{losingHero} falls in the wasteland.</div>
-              <div style={{ width: 200, height: 200, border: "2px solid #000", borderRadius: 6, background: "#f2f2f2", display: "flex", alignItems: "center", justifyContent: "center", margin: "16px auto 0", overflow: "hidden" }}>
+              {/* the win/lose clip is skipped in "Notepad Style without Arts" */}
+              {display.mode !== "noart" && <div style={{ width: 200, height: 200, border: "2px solid #000", borderRadius: 6, background: "#f2f2f2", display: "flex", alignItems: "center", justifyContent: "center", margin: "16px auto 0", overflow: "hidden" }}>
                 {gif ? (
                   gif.startsWith("data:video") ? (
                     <video src={gif} autoPlay loop muted playsInline style={{ width: "100%", height: "100%", objectFit: "cover" }} />
@@ -2476,7 +3962,7 @@ function GameScreen({ state, myIdx, onAction, onConcede, actionError, onSync, on
                 ) : (
                   <span style={{ fontSize: 11, color: "#999" }}>{losingHero} defeat GIF</span>
                 )}
-              </div>
+              </div>}
               <button
                 onClick={onBackToMenu}
                 style={{ marginTop: 18, padding: "10px 20px", fontFamily: FONT, fontSize: 13, fontWeight: 700, border: "2px solid #000", background: "#000", color: "#fff", cursor: "pointer", borderRadius: 4 }}
@@ -2723,7 +4209,13 @@ function GameScreen({ state, myIdx, onAction, onConcede, actionError, onSync, on
    APP — orchestrates screens + matchmaking + polling
    ========================================================================= */
 export default function App() {
-  const [screen, setScreen] = useState("select"); // select | deckbuilder | searching | game | leaderboard | quests | shop
+  const [screen, setScreen] = useState("select"); // select | deckbuilder | searching | game | leaderboard | quests | shop | settings
+  // Display Options (Settings screen) - remembered on this device, see DISPLAY SETTINGS above.
+  const [displaySettings, setDisplaySettings] = useState(loadDisplaySettings);
+  const displayValue = React.useMemo(() => ({
+    ...displaySettings,
+    setDisplay: (patch) => setDisplaySettings((prev) => { const next = { ...prev, ...patch }; saveDisplaySettings(next); return next; }),
+  }), [displaySettings]);
   const [hero, setHero] = useState(null);
   const [gameId, setGameId] = useState(null);
   const [myIdx, setMyIdx] = useState(null);
@@ -3406,8 +4898,10 @@ export default function App() {
   }
 
   return (
+    <DisplayContext.Provider value={displayValue}>
     <div style={{ minHeight: "100%", background: "#fff", color: "#111" }}>
       <style>{GLOBAL_STYLE}</style>
+      {displaySettings.mode === "deluxe" && <style>{DELUXE_STYLE}</style>}
       {screen !== "game" && (
         <div style={{ maxWidth: 640, margin: "0 auto", padding: "8px 20px 0", display: "flex", justifyContent: "space-between", alignItems: "center", fontFamily: FONT, gap: 8 }}>
           {screen === "select" ? (
@@ -3452,7 +4946,8 @@ export default function App() {
           <button onClick={dismissReconnect} style={{ fontFamily: FONT, marginLeft: 6, padding: "3px 10px", border: "1px solid #999", background: "#fff", cursor: "pointer", borderRadius: 3 }}>Dismiss</button>
         </div>
       )}
-      {screen === "select" && <HeroSelectScreen onPick={startSearch} onBuildDeck={openDeckBuilder} onPlayCpu={startCpuMatch} onShowLeaderboard={() => setScreen("leaderboard")} onShowQuests={() => setScreen("quests")} onShowShop={() => setScreen("shop")} myProfile={myProfile} myLegendaryRank={myLegendaryRank} customDecks={customDecks} />}
+      {screen === "select" && <HeroSelectScreen onPick={startSearch} onBuildDeck={openDeckBuilder} onPlayCpu={startCpuMatch} onShowLeaderboard={() => setScreen("leaderboard")} onShowQuests={() => setScreen("quests")} onShowShop={() => setScreen("shop")} onShowSettings={() => setScreen("settings")} myProfile={myProfile} myLegendaryRank={myLegendaryRank} customDecks={customDecks} />}
+      {screen === "settings" && <SettingsScreen onBack={() => setScreen("select")} />}
       {screen === "leaderboard" && <LeaderboardScreen onBack={() => setScreen("select")} myProfile={myProfile} sessionId={sessionId} profileLoading={profileLoading} />}
       {screen === "quests" && <QuestsScreen onBack={() => setScreen("select")} myProfile={myProfile} profileLoading={profileLoading} />}
       {screen === "shop" && <ShopScreen onBack={() => setScreen("select")} myProfile={myProfile} user={user} onBuyUnlockAll={buyUnlockAll} onBuyHero={buyHeroUnlock} />}
@@ -3460,5 +4955,6 @@ export default function App() {
       {screen === "searching" && <SearchingScreen hero={hero} onCancel={cancelSearch} />}
       {screen === "game" && gameState && <GameScreen state={gameState} myIdx={myIdx} onAction={handleAction} onConcede={concede} actionError={actionError} onSync={manualSync} onBackToMenu={returnToMenu} isCpuMatch={isCpuMatch} />}
     </div>
+    </DisplayContext.Provider>
   );
 }
