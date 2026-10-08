@@ -1389,7 +1389,20 @@ const DELUXE_STYLE = `
 
 /* ---- blood: splatters land on the table and stay there for a while ---- */
 .dx-decals { position: absolute; inset: 0; pointer-events: none; z-index: 2; }
-.dx-decal { position: absolute; transform: translate(-50%,-50%); animation: dxSplatIn 0.3s cubic-bezier(.2,1.5,.4,1) backwards, dxSplatOut 5s ease-in var(--life,20s) forwards; }
+.dx-decal { position: absolute; transform: translate(-50%,-50%); animation: dxSplatIn 0.32s cubic-bezier(.2,1.2,.4,1) var(--in,0s) backwards, dxSplatOut 5s ease-in var(--life,20s) forwards; }
+.dx-sprays { position: absolute; inset: 0; pointer-events: none; z-index: 6; }
+.dx-spray { position: absolute; width: 0; height: 0; }
+.dx-spray-mist { position: absolute; left: 0; top: 0; width: 120px; height: 120px; border-radius: 50%; background: radial-gradient(circle,rgba(120,8,8,0.42),rgba(90,4,4,0.18) 45%,rgba(60,0,0,0) 70%); transform: translate(-50%,-50%) scale(0.2); animation: dxMist 0.6s ease-out forwards; }
+@keyframes dxMist { 0% { transform: translate(-50%,-50%) scale(0.2); opacity: 0.9; } 100% { transform: translate(-50%,-50%) scale(1.7); opacity: 0; } }
+.dx-sdrop { position: absolute; left: 0; top: 0; border-radius: 50%; background: radial-gradient(circle at 38% 34%,#d8402e 0%,#a01410 28%,#5e0606 70%,#260202 100%); box-shadow: 0 0 2px rgba(0,0,0,0.7); opacity: 0;
+  animation-name: dxSDrop; animation-timing-function: linear; animation-fill-mode: forwards; }
+/* out of the card and toward the viewer (bigger), up in an arc, then down onto the table (smaller again) */
+@keyframes dxSDrop {
+  0% { transform: translate(-50%,-50%) translate(0,0) scale(0.4); opacity: 0; }
+  8% { opacity: 1; }
+  38% { transform: translate(-50%,-50%) translate(calc(var(--dx) * 0.45), calc(var(--dy) * 0.3 - var(--lift))) scale(var(--s)); }
+  70% { transform: translate(-50%,-50%) translate(calc(var(--dx) * 0.8), calc(var(--dy) * 0.75 - var(--lift) * 0.35)) scale(calc(var(--s) * 0.8)); opacity: 1; }
+  100% { transform: translate(-50%,-50%) translate(var(--dx), var(--dy)) scale(0.6); opacity: 0; } }
 @keyframes dxSplatIn { 0% { transform: translate(-50%,-50%) scale(0.12); opacity: 0; } 100% { transform: translate(-50%,-50%) scale(1); opacity: 1; } }
 @keyframes dxSplatOut { 100% { opacity: 0; } }
 .dx-droplet { position: absolute; left: 50%; top: 50%; width: 11px; height: 11px; border-radius: 50%; background: radial-gradient(circle at 35% 30%,#a81a14,#560606 55%,#260202); box-shadow: 0 0 2px rgba(20,0,0,0.8); animation: dxDroplet 0.5s cubic-bezier(.15,.7,.45,1) forwards; }
@@ -1466,7 +1479,7 @@ const PIXEL_STYLE = `
 @font-face { font-family: "AtomicPixel"; src: url(data:font/woff;base64,${DX_PIXEL_FONT_B64}) format("woff"); font-display: block; }
 .dx-skin-pixel, .dx-skin-pixel * { font-family: ${DX_PIXEL_FONT} !important; letter-spacing: 0 !important; font-stretch: normal !important; font-weight: 400 !important; -webkit-font-smoothing: none; }
 .dx-skin-pixel img, .dx-skin-pixel canvas, .dx-pixelated { image-rendering: crisp-edges; image-rendering: pixelated; }
-.dx-skin-pixel .dx-btn { border-radius: 0; border: 3px solid #0a0a06; background: #55553a; color: #f4e9b0; text-shadow: 2px 2px 0 #0a0a06; transition: none;
+.dx-skin-pixel .dx-btn { border-radius: 0; border: 3px solid #0a0a06; background: #55553a; color: #f4e9b0; text-shadow: 2px 2px 0 #0a0a06;
   box-shadow: inset 3px 3px 0 #8c8c62, inset -3px -3px 0 #2c2c1c, 4px 4px 0 #0a0a06; }
 .dx-skin-pixel .dx-btn:active:not(:disabled) { transform: translate(3px,3px); box-shadow: inset 3px 3px 0 #8c8c62, inset -3px -3px 0 #2c2c1c; }
 .dx-skin-pixel .dx-btn-go { background: #d09a1a; color: #1c1200; text-shadow: none; box-shadow: inset 3px 3px 0 #f6d264, inset -3px -3px 0 #8a5c08, 4px 4px 0 #0a0a06; }
@@ -1489,11 +1502,9 @@ const PIXEL_STYLE = `
 .dx-skin-pixel .dx-badge-atk { background: #e09a1c; box-shadow: inset 3px 3px 0 #ffd870, inset -3px -3px 0 #8a5206; }
 .dx-skin-pixel .dx-badge-hp { background: #c8281e; box-shadow: inset 3px 3px 0 #f47868, inset -3px -3px 0 #6e0e08; }
 .dx-skin-pixel .dx-badge-armor { background: #8a94a0; box-shadow: inset 3px 3px 0 #d8e0e8, inset -3px -3px 0 #3e4650; }
-.dx-skin-pixel .dx-playable .dx-card-frame { animation: dxpPlayable 0.8s steps(1) infinite; }
+.dx-skin-pixel .dx-playable .dx-card-frame { animation: dxpPlayable 0.8s ease-in-out infinite; }
 @keyframes dxpPlayable { 0%,100% { box-shadow: inset 4px 4px 0 rgba(255,255,255,0.42), inset -4px -4px 0 rgba(0,0,0,0.5), 0 0 0 3px #0a0a06, 0 0 0 7px #39ff14; } 50% { box-shadow: inset 4px 4px 0 rgba(255,255,255,0.42), inset -4px -4px 0 rgba(0,0,0,0.5), 0 0 0 3px #0a0a06, 0 0 0 7px #1c8f08; } }
-.dx-skin-pixel .dx-handcard { transition-timing-function: steps(4); animation-timing-function: steps(6); }
 
-.dx-skin-pixel .dx-minion-body { animation-timing-function: steps(6); transition: none; }
 .dx-skin-pixel .dx-minion-frame, .dx-skin-pixel .dx-minion-taunt .dx-minion-frame { border-radius: 0; background: var(--rs); box-shadow: inset 3px 3px 0 rgba(255,255,255,0.42), inset -3px -3px 0 rgba(0,0,0,0.5), 0 0 0 3px #0a0a06, 6px 6px 0 rgba(0,0,0,0.5); animation: none; }
 .dx-skin-pixel .dx-minion-taunt .dx-minion-frame { box-shadow: 0 0 0 3px #0a0a06, 0 0 0 8px #b8bec8, 0 0 0 11px #0a0a06, 9px 9px 0 6px rgba(0,0,0,0.5); }
 .dx-skin-pixel .dx-minion-art, .dx-skin-pixel .dx-minion-taunt .dx-minion-art { border-radius: 0; }
@@ -1501,43 +1512,41 @@ const PIXEL_STYLE = `
 .dx-skin-pixel .dx-minion-name { font-size: 13px; text-shadow: 2px 2px 0 #0a0a06; left: 34px; right: 34px; bottom: 8px; }
 .dx-skin-pixel .dx-taunt-tab { border-radius: 0; background: #b8bec8; border: 3px solid #0a0a06; box-shadow: none; font-size: 12px; top: -19px; }
 .dx-skin-pixel .dx-chip { border-radius: 0; border: 3px solid #0a0a06; box-shadow: none; }
-.dx-skin-pixel .dx-ready .dx-minion-frame, .dx-skin-pixel .dx-toxic.dx-ready .dx-minion-frame { animation: dxpReady 0.8s steps(1) infinite; }
-.dx-skin-pixel .dx-targetable .dx-minion-frame, .dx-skin-pixel .dx-toxic.dx-targetable .dx-minion-frame, .dx-skin-pixel .dx-hero-targetable { animation: dxpTarget 0.5s steps(1) infinite; }
-.dx-skin-pixel .dx-toxic .dx-minion-frame { animation: dxpToxic 1s steps(1) infinite; }
+.dx-skin-pixel .dx-ready .dx-minion-frame, .dx-skin-pixel .dx-toxic.dx-ready .dx-minion-frame { animation: dxpReady 0.8s ease-in-out infinite; }
+.dx-skin-pixel .dx-targetable .dx-minion-frame, .dx-skin-pixel .dx-toxic.dx-targetable .dx-minion-frame, .dx-skin-pixel .dx-hero-targetable { animation: dxpTarget 0.5s ease-in-out infinite; }
+.dx-skin-pixel .dx-toxic .dx-minion-frame { animation: dxpToxic 1s ease-in-out infinite; }
 .dx-skin-pixel .dx-selected .dx-minion-frame, .dx-skin-pixel .dx-selected.dx-toxic .dx-minion-frame { box-shadow: 0 0 0 3px #0a0a06, 0 0 0 9px #ffe04a, 0 0 0 12px #0a0a06; animation: none; }
 .dx-skin-pixel .dx-selected .dx-minion-body { transform: translateY(-15px); }
 @keyframes dxpReady { 0%,100% { box-shadow: 0 0 0 3px #0a0a06, 0 0 0 8px #39ff14; } 50% { box-shadow: 0 0 0 3px #0a0a06, 0 0 0 8px #1c8f08; } }
 @keyframes dxpTarget { 0%,100% { box-shadow: 0 0 0 3px #0a0a06, 0 0 0 8px #ff3a28; } 50% { box-shadow: 0 0 0 3px #0a0a06, 0 0 0 8px #ffd0c0; } }
 @keyframes dxpToxic { 0%,100% { box-shadow: 0 0 0 3px #0a0a06, 0 0 0 7px #4fbf1c; } 50% { box-shadow: 0 0 0 3px #0a0a06, 0 0 0 7px #b6ff3c; } }
-.dx-skin-pixel .dx-hit .dx-minion-hit, .dx-skin-pixel .dx-hero-hit { animation-timing-function: steps(5); }
-.dx-skin-pixel .dx-impact::after { border-radius: 0; background: #fff; animation: dxpImpact 0.32s steps(4) forwards; }
+.dx-skin-pixel .dx-impact::after { border-radius: 0; background: #fff; animation: dxpImpact 0.32s ease-out forwards; }
 @keyframes dxpImpact { 0% { transform: translate(-50%,-50%) scale(1); opacity: 1; background: #fff; } 50% { background: #ffd040; } 100% { transform: translate(-50%,-50%) scale(15); opacity: 0; background: #e04010; } }
-.dx-skin-pixel .dx-floater { animation-timing-function: steps(9); text-shadow: 3px 3px 0 #0a0a06, -3px 0 0 #0a0a06, 0 -3px 0 #0a0a06; }
-.dx-skin-pixel .dx-shield { border-radius: 0; border: 4px dashed #bfe9ff; background: rgba(140,205,255,0.18); box-shadow: none; animation: dxpShield 0.8s steps(1) infinite; }
+.dx-skin-pixel .dx-floater { text-shadow: 3px 3px 0 #0a0a06, -3px 0 0 #0a0a06, 0 -3px 0 #0a0a06; }
+.dx-skin-pixel .dx-shield { border-radius: 0; border: 4px dashed #bfe9ff; background: rgba(140,205,255,0.18); box-shadow: none; animation: dxpShield 0.8s ease-in-out infinite; }
 @keyframes dxpShield { 50% { border-color: #5aa0e0; } }
-.dx-skin-pixel .dx-ice, .dx-skin-pixel .dx-goo { filter: none; animation-timing-function: steps(5); }
+.dx-skin-pixel .dx-ice, .dx-skin-pixel .dx-goo { filter: none; }
 .dx-skin-pixel .dx-death-flash { display: none; }
-.dx-skin-pixel .dx-ember { border-radius: 0; background: #ffb020; animation-timing-function: steps(6); }
-.dx-tile { position: absolute; inset: 0; animation: dxpTile 0.95s steps(8) forwards; }
+.dx-skin-pixel .dx-ember { border-radius: 0; background: #ffb020; }
+.dx-tile { position: absolute; inset: 0; animation: dxpTile 0.95s ease-out forwards; }
 @keyframes dxpTile { 0% { transform: translate(0,0); opacity: 1; filter: brightness(2.2); } 14% { filter: none; opacity: 1; } 100% { transform: translate(var(--tx), var(--ty)); opacity: 0; } }
-.dx-pix-cell { animation: dxpCell 2.4s steps(1) infinite; }
+.dx-pix-cell { animation: dxpCell 2.4s ease-in-out infinite; }
 @keyframes dxpCell { 0%,100% { opacity: 1; } 50% { opacity: 0.35; } }
-.dx-pix-glint { animation: dxpGlint 2.8s steps(9) infinite; }
+.dx-pix-glint { animation: dxpGlint 2.8s ease-out infinite; }
 @keyframes dxpGlint { 0%,45% { transform: translateX(-10px); } 85%,100% { transform: translateX(18px); } }
-.dx-pix-snow { animation: dxpSnow 2.2s steps(11) infinite; }
+.dx-pix-snow { animation: dxpSnow 2.2s ease-out infinite; }
 @keyframes dxpSnow { 0% { transform: translateY(-1px); opacity: 1; } 100% { transform: translateY(21px); opacity: 1; } }
-.dx-pix-drip { transform-box: fill-box; transform-origin: 50% 0%; animation: dxpDrip 1.8s steps(4) infinite; }
+.dx-pix-drip { transform-box: fill-box; transform-origin: 50% 0%; animation: dxpDrip 1.8s ease-out infinite; }
 @keyframes dxpDrip { 0%,100% { transform: scaleY(0.4); } 50% { transform: scaleY(1); } }
-.dx-pix-bubble { animation: dxpBubble 1.9s steps(10) infinite; }
+.dx-pix-bubble { animation: dxpBubble 1.9s ease-out infinite; }
 @keyframes dxpBubble { 0% { transform: translateY(0); opacity: 1; } 90% { opacity: 1; } 100% { transform: translateY(-20px); opacity: 0; } }
-.dx-skin-pixel .dx-decal { animation: dxSplatIn 0.2s steps(3) backwards, dxSplatOut 6s steps(6) var(--life,60s) forwards; }
-.dx-skin-pixel .dx-droplet { border-radius: 0; background: #c81818; width: 12px; height: 12px; animation-timing-function: steps(5); }
+.dx-skin-pixel .dx-decal { animation: dxSplatIn 0.2s ease-out backwards, dxSplatOut 6s ease-out var(--life,60s) forwards; }
+.dx-skin-pixel .dx-droplet { border-radius: 0; background: #c81818; width: 12px; height: 12px; }
 .dx-skin-pixel .dx-mat { border-radius: 0; border: 4px solid #0a0a06; background: rgba(0,0,0,0.18); box-shadow: inset 0 0 0 4px var(--accent-soft,rgba(255,255,255,0.2)); }
 .dx-skin-pixel .dx-mat3d { transform: none; }
-.dx-skin-pixel .dx-banner, .dx-skin-pixel .dx-reveal, .dx-skin-pixel .dx-pop, .dx-skin-pixel .dx-modal { animation-timing-function: steps(7); }
-.dx-skin-pixel .dx-endtitle { animation: dxpEndTitle 0.9s steps(6) backwards; margin-right: 0; }
+.dx-skin-pixel .dx-endtitle { animation: dxpEndTitle 0.9s ease-out backwards; margin-right: 0; }
 @keyframes dxpEndTitle { 0% { opacity: 0; transform: scale(2.2); } 100% { opacity: 1; transform: scale(1); } }
-.dx-skin-pixel .dx-endrule { height: 4px; animation-timing-function: steps(6); }
+.dx-skin-pixel .dx-endrule { height: 4px; }
 `;
 
 /* ---------- procedural grit textures (generated once, reused by every board) ---------- */
@@ -2330,19 +2339,20 @@ function dxBloodURL(seed, kind) {
     ctx.fillStyle = "#000"; ctx.fillRect(0, 0, S, S);
     const stamp = dxStamper(ctx);
     const rnd = mulberry32(seed);
-    const R = S * (kill ? 0.15 : 0.16);
+    const R = S * (kill ? 0.115 : 0.11);
     // the pool
-    for (let i = 0; i < (kill ? 10 : 5); i++) { const a = rnd() * 6.283, dd = rnd() * R * 0.95; stamp(c + Math.cos(a) * dd, c + Math.sin(a) * dd * 0.85, R * (0.55 + rnd() * 0.6), 0.9); }
+    for (let i = 0; i < (kill ? 8 : 4); i++) { const a = rnd() * 6.283, dd = rnd() * R * 0.9; stamp(c + Math.cos(a) * dd, c + Math.sin(a) * dd * 0.85, R * (0.5 + rnd() * 0.5), 0.85); }
     // cast-off: long drops thrown outward, thin tail pointing back at the wound, heavy head
-    for (let i = 0; i < (kill ? 18 : 7); i++) {
-      const a = rnd() * 6.283, d0 = R * (0.8 + rnd() * 0.7), len = R * (0.5 + rnd() * (kill ? 2.1 : 1.3)), w = R * (0.05 + rnd() * 0.1);
+    for (let i = 0; i < (kill ? 9 : 3); i++) {
+      const a = rnd() * 6.283, d0 = R * (0.8 + rnd() * 0.7), len = R * (0.4 + rnd() * (kill ? 1.6 : 1.0)), w = R * (0.035 + rnd() * 0.06);
       const steps = Math.max(6, Math.floor(len / (w * 0.45)));
       const bend = (rnd() - 0.5) * 0.25;
       for (let s = 0; s <= steps; s++) { const t = s / steps, aa = a + bend * t; stamp(c + Math.cos(aa) * (d0 + len * t), c + Math.sin(aa) * (d0 + len * t) * 0.88, w * (0.5 + 1.5 * t * t) * 1.7, 0.7); }
     }
     // satellite drops and fine mist
-    for (let i = 0; i < (kill ? 46 : 16); i++) { const a = rnd() * 6.283, dd = R * (1.15 + Math.pow(rnd(), 0.7) * (kill ? 2.1 : 1.6)); stamp(c + Math.cos(a) * dd, c + Math.sin(a) * dd * 0.88, R * (0.04 + rnd() * rnd() * 0.16) * 1.7, 0.95); }
-    for (let i = 0; i < (kill ? 260 : 80); i++) { const a = rnd() * 6.283, dd = R * (0.8 + rnd() * 2.4); stamp(c + Math.cos(a) * dd, c + Math.sin(a) * dd * 0.88, 1.2 + rnd() * 2.2, 0.85); }
+    for (let i = 0; i < (kill ? 40 : 18); i++) { const a = rnd() * 6.283, dd = R * (1.1 + Math.pow(rnd(), 0.7) * (kill ? 2.6 : 2.4)); stamp(c + Math.cos(a) * dd, c + Math.sin(a) * dd * 0.88, R * (0.025 + rnd() * rnd() * 0.08) * 1.7, 0.95); }
+    // fine spray: lots of tiny specks, thinning out with distance
+    for (let i = 0; i < (kill ? 520 : 300); i++) { const a = rnd() * 6.283, dd = R * (0.7 + Math.pow(rnd(), 1.6) * (kill ? 3.6 : 3.8)); stamp(c + Math.cos(a) * dd, c + Math.sin(a) * dd * 0.88, 0.7 + rnd() * rnd() * 2.4, 0.9); }
     dxShadeLiquid(cv, { ...DX_BLOOD, seed: seed % 997 });
     if (kill) {
       // what's left of the minion: torn tissue and loops of gut, glazed with blood
@@ -2351,7 +2361,7 @@ function dxBloodURL(seed, kind) {
         let x = c + (rnd() - 0.5) * R * 1.3, y = c + (rnd() - 0.5) * R, ang = rnd() * 6.283;
         const pts = [[x, y]];
         for (let s = 0; s < 6; s++) { ang += (rnd() - 0.5) * 2.4; x += Math.cos(ang) * R * 0.34; y += Math.sin(ang) * R * 0.28; pts.push([x, y]); }
-        const w = R * (0.13 + rnd() * 0.06);
+        const w = R * (0.11 + rnd() * 0.05);
         const path = (ox, oy) => { ctx.beginPath(); ctx.moveTo(pts[0][0] + ox, pts[0][1] + oy); for (let k = 1; k < pts.length - 1; k++) ctx.quadraticCurveTo(pts[k][0] + ox, pts[k][1] + oy, (pts[k][0] + pts[k + 1][0]) / 2 + ox, (pts[k][1] + pts[k + 1][1]) / 2 + oy); };
         path(1.5, 2); ctx.strokeStyle = "rgba(14,2,2,0.85)"; ctx.lineWidth = w + 4; ctx.stroke();
         path(0, 0); ctx.strokeStyle = "#5e2422"; ctx.lineWidth = w; ctx.stroke();
@@ -2490,9 +2500,38 @@ function DxDecal({ decal, pixel }) {
     return out;
   }, [decal.seed, decal.kind]);
   return (
-    <div className="dx-decal" style={{ left: decal.x, top: decal.y, "--life": `${decal.life}s` }}>
+    <div className="dx-decal" style={{ left: decal.x, top: decal.y, "--life": `${decal.life}s`, "--in": pixel ? "0s" : "0.36s" }}>
       {pixel ? <DxSplatPixel seed={decal.seed} kind={decal.kind} /> : <DxSplat seed={decal.seed} kind={decal.kind} />}
-      {drops.map((d, i) => <div key={i} className="dx-droplet" style={{ "--bx": `${d.bx.toFixed(0)}px`, "--by": `${d.by.toFixed(0)}px`, animationDelay: `${d.delay.toFixed(2)}s`, width: 11 * d.s, height: 11 * d.s }} />)}
+      {pixel && drops.map((d, i) => <div key={i} className="dx-droplet" style={{ "--bx": `${d.bx.toFixed(0)}px`, "--by": `${d.by.toFixed(0)}px`, animationDelay: `${d.delay.toFixed(2)}s`, width: 11 * d.s, height: 11 * d.s }} />)}
+    </div>
+  );
+}
+
+// Full Graphics: the moment of a hit - drops burst off the front of the card toward you,
+// arc up, then fall onto the table where the stain appears.
+function DxSpray({ spray }) {
+  const drops = React.useMemo(() => {
+    const rnd = mulberry32(spray.seed + 11), out = [];
+    const kill = spray.kind === "kill";
+    const n = kill ? 34 : 20;
+    for (let i = 0; i < n; i++) {
+      const toward = rnd() < 0.7;                       // most drops fly toward where the stain lands
+      const a = toward ? spray.ang + (rnd() - 0.5) * 1.3 : rnd() * 6.283;
+      const d = (kill ? 40 : 70) + rnd() * (kill ? 150 : 70);
+      out.push({
+        dx: Math.cos(a) * d, dy: Math.sin(a) * d * 0.85 + 18,
+        lift: 26 + rnd() * (kill ? 70 : 46), s: 1.3 + rnd() * 0.9,
+        size: 2.5 + Math.pow(rnd(), 2) * (kill ? 7 : 5), dur: 0.5 + rnd() * 0.32, delay: rnd() * 0.07,
+      });
+    }
+    return out;
+  }, [spray.seed, spray.kind, spray.ang]);
+  return (
+    <div className="dx-spray" style={{ left: spray.x, top: spray.y }}>
+      <div className="dx-spray-mist" />
+      {drops.map((d, i) => (
+        <div key={i} className="dx-sdrop" style={{ width: d.size, height: d.size, "--dx": `${d.dx.toFixed(0)}px`, "--dy": `${d.dy.toFixed(0)}px`, "--lift": `${d.lift.toFixed(0)}px`, "--s": d.s.toFixed(2), animationDuration: `${d.dur.toFixed(2)}s`, animationDelay: `${d.delay.toFixed(2)}s` }} />
+      ))}
     </div>
   );
 }
@@ -2724,7 +2763,7 @@ function dxLunge(attEl, tgtEl, scale, stepped) {
       { transform: `translate3d(${-dx * 0.07}px,${-dy * 0.07}px,0) scale(1.16) rotate(${stepped ? 0 : -5 * lean}deg)`, offset: 0.3 },
       { transform: `translate3d(${dx * 0.8}px,${dy * 0.8}px,0) scale(1.05) rotate(${stepped ? 0 : 7 * lean}deg)`, offset: 0.55 },
       { transform: "translate3d(0,0,0) scale(1) rotate(0deg)" },
-    ], { duration: 580, easing: stepped ? "steps(9)" : "cubic-bezier(.3,.1,.3,1)" });
+    ], { duration: 580, easing: "cubic-bezier(.3,.1,.3,1)" });
     anim.onfinish = anim.oncancel = () => { attEl.style.zIndex = oldZ; };
     setTimeout(() => {
       tgtEl.classList.add("dx-impact");
@@ -2830,6 +2869,7 @@ function DeluxeGame({ g }) {
   const [banner, setBanner] = useState(null);
   const [reveals, setReveals] = useState([]);
   const [decals, setDecals] = useState([]);     // blood left on the table
+  const [sprays, setSprays] = useState([]);     // drops in flight right now (Full Graphics)
   const [handUp, setHandUp] = useState(false);  // landscape: is the hand raised out of its tray?
   const [focusIdx, setFocusIdx] = useState(null); // touch: which hand card is brought to the front
   const [touchMode, setTouchMode] = useState(false);
@@ -2863,10 +2903,12 @@ function DeluxeGame({ g }) {
         const seed = Math.floor(Math.random() * 1e9);
         // A kill leaves its mess where the minion stood; a hit sprays out past the edge of the card
         // (straight under the card it would never be seen).
-        const ang = Math.random() * Math.PI * 2;
-        const off = kind === "kill" ? 0.12 : 0.5;
+        // hits splash up or down off the card, into the gap between the rows, where it can be seen
+        const ang = kind === "kill" ? Math.random() * Math.PI * 2 : (Math.random() < 0.5 ? -Math.PI / 2 : Math.PI / 2) + (Math.random() - 0.5) * 1.3;
+        const off = kind === "kill" ? 0.12 : 0.6;
         fresh.push({
-          id: seed + ":" + Date.now(), seed, kind, lane: sideOf(idx), born: Date.now(),
+          id: seed + ":" + Date.now(), seed, kind, lane: sideOf(idx), born: Date.now(), ang,
+          cx: (r.left + r.width / 2 - lr.left) / scaleRef.current, cy: (r.top + r.height * 0.45 - lr.top) / scaleRef.current,
           x: (r.left + r.width * (0.5 + Math.cos(ang) * off) - lr.left) / scaleRef.current,
           y: (r.top + r.height * (0.52 + Math.sin(ang) * off) - lr.top) / scaleRef.current,
           life: pixel ? (kind === "kill" ? 240 : 90) : (kind === "kill" ? 60 : 26),
@@ -2874,6 +2916,12 @@ function DeluxeGame({ g }) {
       });
     });
     if (fresh.length) setDecals((d) => [...d, ...fresh].slice(pixel ? -90 : -44));
+    if (fresh.length && !pixel) {
+      // every hit also throws a short burst of drops off the card
+      const burst = fresh.map((f) => ({ id: "s" + f.id, seed: f.seed, kind: f.kind, lane: f.lane, x: f.cx, y: f.cy, ang: f.kind === "kill" ? Math.random() * 6.283 : f.ang }));
+      setSprays((sp) => [...sp, ...burst].slice(-24));
+      setTimeout(() => setSprays((sp) => sp.filter((x) => !burst.includes(x))), 1300);
+    }
 
     const lines = dxNewLogLines(prev.log, state.log);
     if (!lines.length) return;
@@ -2945,6 +2993,7 @@ function DeluxeGame({ g }) {
     return (
       <div data-dx-lane={side} style={{ position: "relative", width: laneW, height: laneH, display: "flex", alignItems: "center", justifyContent: "center" }}>
         <div className="dx-decals">{decals.filter((d) => d.lane === side).map((d) => <DxDecal key={d.id} decal={d} pixel={pixel} />)}</div>
+        <div className="dx-sprays">{sprays.filter((d) => d.lane === side).map((d) => <DxSpray key={d.id} spray={d} />)}</div>
         <div style={{ position: "relative", zIndex: 3, display: "flex", flexWrap: "wrap", justifyContent: "center", alignContent: "center", columnGap: gapX, rowGap: gapY, width: fit.cols * w + (fit.cols - 1) * gapX + 2, paddingTop: 12 }}>
           {board.map((m) => (
             <DeluxeMinion
@@ -3469,6 +3518,63 @@ const MENU_STYLE = `
 .fx-rules button { background: rgba(255,255,255,0.03) !important; border: 1px solid var(--fx-line) !important; color: var(--fx-text) !important; font-family: var(--fx-display) !important; text-transform: uppercase; letter-spacing: 0.18em; border-radius: var(--fx-radius) !important; }
 @media (max-width: 560px) { .fx-brand { font-size: 17px; letter-spacing: 0.3em; } .fx-h1 { font-size: 23px; } .fx-dossier-name { font-size: 28px; } .fx-wrap { padding: 0 14px 50px; } .fx-heroes { gap: 8px; } .fx-hero-name { font-size: 14px; } .fx-hero-power { display: none; } }
 
+/* ---- phone (portrait) main screen: account badge + pop-up menu, compact hero picker ---- */
+.fx-top-phone { flex-wrap: nowrap; padding: 12px 0 10px; }
+.fx-top-phone { gap: 10px; } .fx-top-phone .fx-brand { font-size: 14px; letter-spacing: 0.16em; gap: 7px; min-width: 0; }
+.fx-badge { display: flex; align-items: center; gap: 10px; padding: 7px 8px 7px 12px; background: var(--fx-panel); border: 1px solid var(--fx-line); border-radius: var(--fx-radius); color: inherit; font: inherit; cursor: pointer; text-align: right; flex-shrink: 0; transition: border-color 0.15s, background 0.15s; }
+.fx-badge:hover, .fx-badge:active { border-color: var(--fx-ember); background: rgba(196,98,45,0.12); }
+.fx-badge-name { font-family: var(--fx-display); font-stretch: condensed; text-transform: uppercase; letter-spacing: 0.12em; font-weight: 700; font-size: 14px; line-height: 1.15; max-width: 120px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.fx-badge-rank { font-family: var(--fx-display); text-transform: uppercase; letter-spacing: 0.16em; font-size: 10px; color: var(--fx-muted); line-height: 1.3; }
+.fx-badge-bullets { font-family: var(--fx-display); font-weight: 800; font-size: 12.5px; color: var(--fx-gold); line-height: 1.25; white-space: nowrap; }
+.fx-burger { display: flex; flex-direction: column; justify-content: center; gap: 4px; width: 30px; height: 30px; padding: 0 5px; border-left: 1px solid var(--fx-line); margin-left: 2px; padding-left: 9px; box-sizing: content-box; }
+.fx-burger i { display: block; height: 2px; background: var(--fx-text); border-radius: 1px; transition: transform 0.2s; }
+.fx-badge:hover .fx-burger i:nth-child(2) { transform: scaleX(0.7); transform-origin: right; }
+.fx-umenu-back { position: fixed; inset: 0; z-index: 400; background: rgba(6,5,4,0.62); animation: dxModalIn 0.2s ease-out; -webkit-tap-highlight-color: transparent; }
+.fx-umenu { position: absolute; top: 10px; right: 10px; width: min(320px, calc(100vw - 20px)); max-height: calc(100vh - 20px); overflow-y: auto; background: var(--fx-solid); border: 1px solid var(--fx-line); border-radius: var(--fx-radius); padding: 18px 18px 16px; box-shadow: 0 24px 60px rgba(0,0,0,0.7); transform-origin: top right; animation: fxMenuIn 0.34s cubic-bezier(.2,.9,.25,1.15); }
+.fx-umenu::before { content: ""; position: absolute; left: -1px; top: -1px; width: 45%; height: 2px; background: linear-gradient(90deg,var(--fx-rust),rgba(0,0,0,0)); }
+@keyframes fxMenuIn { 0% { opacity: 0; transform: translate(14px,-14px) scale(0.82); filter: blur(4px); } 100% { opacity: 1; transform: none; filter: none; } }
+.fx-umenu > * { animation: fxItemIn 0.38s cubic-bezier(.2,.8,.2,1) backwards; animation-delay: calc(0.05s + var(--k,0) * 0.045s); }
+@keyframes fxItemIn { 0% { opacity: 0; transform: translateX(16px); } 100% { opacity: 1; transform: none; } }
+.fx-umenu-close { position: absolute; top: 8px; right: 8px; width: 34px; height: 34px; background: none; border: none; color: var(--fx-muted); font-size: 22px; line-height: 1; cursor: pointer; animation: none; }
+.fx-umenu-name { font-family: var(--fx-thin); font-weight: 200; text-transform: uppercase; letter-spacing: 0.22em; font-size: 26px; line-height: 1.1; padding-right: 30px; overflow-wrap: anywhere; }
+.fx-umenu-bullets { margin-top: 10px; font-size: 14px; color: var(--fx-muted); }
+.fx-umenu-bullets b { font-family: var(--fx-display); font-weight: 800; font-size: 22px; color: var(--fx-gold); text-shadow: 0 0 12px rgba(224,177,90,0.75), 0 0 2px rgba(255,220,140,0.9); margin: 0 3px; }
+.fx-umenu-rank { margin-top: 12px; padding: 10px 12px; border: 1px solid var(--fx-line); border-left: 3px solid var(--tier,var(--fx-rust)); background: rgba(0,0,0,0.25); }
+.fx-umenu-rank b { display: block; font-family: var(--fx-display); text-transform: uppercase; letter-spacing: 0.16em; font-size: 13px; }
+.fx-umenu-rank span { display: block; font-size: 12.5px; color: var(--fx-muted); margin-top: 2px; }
+.fx-umenu-online { margin-top: 8px; font-size: 12px; color: var(--fx-muted); }
+.fx-umenu-nav { display: flex; flex-direction: column; gap: 6px; margin-top: 16px; }
+.fx-umenu-nav button { display: flex; align-items: center; justify-content: space-between; width: 100%; padding: 12px 14px; background: rgba(255,255,255,0.03); border: 1px solid var(--fx-line); border-radius: var(--fx-radius); color: var(--fx-text); font-family: var(--fx-display); font-stretch: condensed; text-transform: uppercase; letter-spacing: 0.18em; font-size: 14px; font-weight: 700; cursor: pointer; text-align: left; transition: border-color 0.15s, background 0.15s; animation: fxItemIn 0.38s cubic-bezier(.2,.8,.2,1) backwards; animation-delay: calc(0.12s + var(--k,0) * 0.045s); }
+.fx-umenu-nav button::after { content: "›"; font-size: 18px; color: var(--fx-muted); }
+.fx-umenu-nav button:hover, .fx-umenu-nav button:active { border-color: var(--fx-ember); background: rgba(196,98,45,0.14); }
+.fx-umenu-nav .fx-shop { background: linear-gradient(180deg,#2f7fe0,#1b5bb3); border-color: #6fb0ff; color: #fff; box-shadow: 0 0 0 1px rgba(0,0,0,0.5), 0 6px 18px rgba(40,120,230,0.35); }
+.fx-umenu-nav .fx-shop::after { color: #d6e9ff; }
+.fx-umenu-nav .fx-shop:hover, .fx-umenu-nav .fx-shop:active { background: linear-gradient(180deg,#3b8df0,#2266c2); border-color: #9cc9ff; }
+.fx-umenu-out { width: 100%; margin-top: 18px; padding: 12px 14px; background: linear-gradient(180deg,#c94a35,#8f2a1c); border: 1px solid #e07a66; border-radius: var(--fx-radius); color: #fff; font-family: var(--fx-display); font-stretch: condensed; text-transform: uppercase; letter-spacing: 0.2em; font-size: 14px; font-weight: 700; cursor: pointer; }
+.fx-umenu-out:active { filter: brightness(1.15); }
+/* compact hero picker */
+.fx-title-swap { position: relative; height: 34px; margin: 22px 0 4px; }
+.fx-title-swap > div { position: absolute; left: 0; right: 0; top: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; font-family: var(--fx-thin); font-weight: 200; text-transform: uppercase; letter-spacing: 0.18em; font-size: 19px; line-height: 34px; transition: opacity 0.3s, transform 0.3s; }
+.fx-title-swap .is-out { opacity: 0; transform: translateY(-8px); }
+.fx-title-swap .fx-title-hero { animation: fxTrack 0.6s cubic-bezier(.2,.8,.2,1); }
+.fx-picks { display: grid; grid-template-columns: repeat(3,minmax(0,1fr)); gap: 14px 10px; margin-top: 12px; }
+.fx-pick { display: flex; flex-direction: column; gap: 6px; padding: 0; background: none; border: none; color: inherit; font: inherit; cursor: pointer; text-align: center; min-width: 0; animation: fxRise 0.5s cubic-bezier(.2,.8,.2,1) backwards; animation-delay: calc(var(--i) * 60ms); }
+.fx-pick-name { font-family: var(--fx-display); font-stretch: condensed; text-transform: uppercase; letter-spacing: 0.14em; font-weight: 700; font-size: 12.5px; height: 16px; line-height: 16px; color: var(--fx-muted); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; transition: color 0.2s; }
+.fx-pick-art { position: relative; aspect-ratio: 3 / 4; border: 1px solid var(--fx-line); border-radius: var(--fx-radius); overflow: hidden; background: #0c0a09; transition: transform 0.22s cubic-bezier(.2,.8,.2,1), border-color 0.2s, box-shadow 0.25s, filter 0.25s; }
+.fx-pick-art .fx-hero-art { filter: saturate(0.8); }
+.fx-pick-power { font-size: 10.5px; line-height: 1.28; color: var(--fx-dim); height: 40px; overflow: hidden; transition: color 0.2s; }
+.fx-picks.has-pick .fx-pick:not(.is-picked) .fx-pick-art { filter: brightness(0.5) saturate(0.45); }
+.fx-pick.is-picked .fx-pick-art { border-color: var(--fx-ember); box-shadow: 0 0 0 1px var(--fx-ember), 0 10px 26px rgba(196,98,45,0.4); transform: translateY(-3px); }
+.fx-pick.is-picked .fx-pick-art .fx-hero-art { filter: none; }
+.fx-pick.is-picked .fx-pick-name { color: var(--fc); }
+.fx-pick.is-picked .fx-pick-power { color: var(--fx-text); }
+.fx-pick.is-picked .fx-scan { animation: fxScan 0.75s ease-out; }
+.fx-pick.is-locked .fx-pick-art .fx-hero-art { filter: grayscale(1) brightness(0.5); }
+.fx-phone-actions { margin-top: 14px; }
+.fx-phone-actions .fx-sub { height: 20px; line-height: 20px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; font-size: 13px; }
+.fx-phone-actions .fx-btn { width: 100%; padding-left: 8px; padding-right: 8px; }
+.fx-phone-row { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; margin-top: 8px; }
+
 /* ---- Pixel Art theme ---- */
 .fx-theme-pixel { --fx-panel: rgba(28,28,16,0.94); --fx-solid: #1c1c10; --fx-line: #5a5a34; --fx-soft: rgba(240,220,140,0.12); --fx-text: #f0dc8c; --fx-muted: #a8a068; --fx-dim: #7a7448;
   --fx-rust: #d07020; --fx-ember: #f0b030; --fx-danger: #c8301e; --fx-ok: #8fd040; --fx-gold: #f0c040; --fx-radius: 0px;
@@ -3482,28 +3588,43 @@ const MENU_STYLE = `
 .fx-theme-pixel .fx-stat b, .fx-theme-pixel .fx-deck-num { font-size: 32px; }
 .fx-theme-pixel .fx-top { border-bottom: 3px solid var(--fx-line); }
 .fx-theme-pixel .fx-chip { border: 3px solid #0a0a06; background: #2a2a18; }
-.fx-theme-pixel .fx-live { border-radius: 0; box-shadow: none; animation: dxpShield 1s steps(1) infinite; }
+.fx-theme-pixel .fx-live { border-radius: 0; box-shadow: none; animation: dxpShield 1s ease-in-out infinite; }
 .fx-theme-pixel .fx-nav button::after { height: 3px; transition: none; }
 .fx-theme-pixel .fx-panel, .fx-theme-pixel .fx-option, .fx-theme-pixel .fx-modal { border: 3px solid #0a0a06; box-shadow: inset 0 0 0 3px var(--fx-line), 6px 6px 0 rgba(0,0,0,0.5); }
 .fx-theme-pixel .fx-option.on { box-shadow: inset 0 0 0 3px var(--fx-ember), 6px 6px 0 rgba(0,0,0,0.5); background: #3a3214; }
 .fx-theme-pixel .fx-panel::before { display: none; }
-.fx-theme-pixel .fx-btn { border: 3px solid #0a0a06; background: #55553a; color: #f4e9b0; text-shadow: 2px 2px 0 #0a0a06; transition: none; padding: 10px 16px; box-shadow: inset 3px 3px 0 #8c8c62, inset -3px -3px 0 #2c2c1c, 4px 4px 0 #0a0a06; }
+.fx-theme-pixel .fx-btn { border: 3px solid #0a0a06; background: #55553a; color: #f4e9b0; text-shadow: 2px 2px 0 #0a0a06; padding: 10px 16px; box-shadow: inset 3px 3px 0 #8c8c62, inset -3px -3px 0 #2c2c1c, 4px 4px 0 #0a0a06; }
 .fx-theme-pixel .fx-btn:hover:not(:disabled) { background: #6c6c4a; border-color: #0a0a06; color: #fff; }
 .fx-theme-pixel .fx-btn:active:not(:disabled) { transform: translate(3px,3px); box-shadow: inset 3px 3px 0 #8c8c62, inset -3px -3px 0 #2c2c1c; }
 .fx-theme-pixel .fx-btn-primary, .fx-theme-pixel .fx-btn-primary:hover:not(:disabled) { background: #d09a1a; color: #1c1200; text-shadow: none; box-shadow: inset 3px 3px 0 #f6d264, inset -3px -3px 0 #8a5c08, 4px 4px 0 #0a0a06; }
-.fx-theme-pixel .fx-hero { border: 3px solid #0a0a06; transition: none; animation-timing-function: steps(5); }
+.fx-theme-pixel .fx-hero { border: 3px solid #0a0a06; }
 .fx-theme-pixel .fx-hero-art { filter: none; transition: none; transform: none !important; }
 .fx-theme-pixel .fx-hero::after { background: linear-gradient(180deg,rgba(10,10,6,0) 0,rgba(10,10,6,0) 62%,rgba(10,10,6,0.9) 62%,rgba(10,10,6,0.9) 100%); }
 .fx-theme-pixel .fx-hero.is-picked { box-shadow: 0 0 0 4px var(--fx-ember), 8px 8px 0 4px rgba(0,0,0,0.5); }
-.fx-theme-pixel .fx-hero-bar { width: 6px; transition: none; } .fx-theme-pixel .fx-scan { animation-timing-function: steps(7) !important; background: rgba(240,176,48,0.5); height: 8%; }
+.fx-theme-pixel .fx-hero-bar { width: 6px; transition: none; } .fx-theme-pixel .fx-scan { background: rgba(240,176,48,0.5); height: 8%; }
 .fx-theme-pixel .fx-tag, .fx-theme-pixel .fx-cost, .fx-theme-pixel .fx-count, .fx-theme-pixel .fx-radio, .fx-theme-pixel .fx-option.on .fx-radio::after, .fx-theme-pixel .fx-ring { border-radius: 0; }
 .fx-theme-pixel .fx-count { border: 3px solid #0a0a06; } .fx-theme-pixel .fx-fly { border: 3px solid #0a0a06; }
-.fx-theme-pixel .fx-pcard, .fx-theme-pixel .fx-row, .fx-theme-pixel .fx-dossier, .fx-theme-pixel .fx-count, .fx-theme-pixel .fx-quest, .fx-theme-pixel .fx-modal, .fx-theme-pixel .fx-ring { animation-timing-function: steps(5); }
-.fx-theme-pixel .fx-pcard { transition: none; }
-.fx-theme-pixel .fx-curve i { background: var(--fx-ember); transition: none; } .fx-theme-pixel .fx-bar { height: 9px; } .fx-theme-pixel .fx-bar i { background: var(--fx-ember); animation-timing-function: steps(8); }
-.fx-theme-pixel .fx-radar { border-radius: 0; border: 3px solid var(--fx-line); } .fx-theme-pixel .fx-radar::before { border-radius: 0; animation-timing-function: steps(12); } .fx-theme-pixel .fx-radar::after { border-radius: 0; }
+.fx-theme-pixel .fx-curve i { background: var(--fx-ember); transition: none; } .fx-theme-pixel .fx-bar { height: 9px; } .fx-theme-pixel .fx-bar i { background: var(--fx-ember); }
+.fx-theme-pixel .fx-radar { border-radius: 0; border: 3px solid var(--fx-line); } .fx-theme-pixel .fx-radar::before { border-radius: 0; } .fx-theme-pixel .fx-radar::after { border-radius: 0; }
 .fx-theme-pixel .fx-rules > div, .fx-theme-pixel .fx-rules > div * { font-family: ${DX_PIXEL_FONT} !important; }
 .fx-theme-pixel .fx-rules > div { border: 3px solid #0a0a06 !important; box-shadow: inset 0 0 0 3px var(--fx-line); }
+
+.fx-theme-pixel .fx-badge, .fx-theme-pixel .fx-umenu, .fx-theme-pixel .fx-umenu-rank { border: 3px solid #0a0a06; box-shadow: inset 0 0 0 3px var(--fx-line), 5px 5px 0 rgba(0,0,0,0.5); }
+.fx-theme-pixel .fx-umenu-rank { border-left: 6px solid var(--tier,var(--fx-rust)); }
+.fx-theme-pixel .fx-burger i { border-radius: 0; height: 3px; }
+.fx-theme-pixel .fx-umenu { animation-name: fxpMenuIn; } @keyframes fxpMenuIn { 0% { opacity: 0; transform: scale(0.6); } 100% { opacity: 1; transform: none; } }
+.fx-theme-pixel .fx-umenu::before { display: none; }
+.fx-theme-pixel .fx-umenu-name { font-size: 24px; }
+.fx-theme-pixel .fx-umenu-bullets b { font-size: 22px; text-shadow: 0 0 8px rgba(240,192,64,0.8), 2px 2px 0 #0a0a06; }
+.fx-theme-pixel .fx-umenu-nav button, .fx-theme-pixel .fx-umenu-out { border: 3px solid #0a0a06; background: #55553a; color: #f4e9b0; text-shadow: 2px 2px 0 #0a0a06; transition: none; box-shadow: inset 3px 3px 0 #8c8c62, inset -3px -3px 0 #2c2c1c; }
+.fx-theme-pixel .fx-umenu-nav .fx-shop { background: #2a6ad0; color: #fff; box-shadow: inset 3px 3px 0 #7ab0ff, inset -3px -3px 0 #123a80; }
+.fx-theme-pixel .fx-umenu-out { background: #b02a1c; box-shadow: inset 3px 3px 0 #e2604c, inset -3px -3px 0 #5e120a; }
+.fx-theme-pixel .fx-title-swap > div { font-size: 21px; }
+.fx-theme-pixel .fx-top-phone .fx-brand { font-size: 13px; } .fx-top-phone .fx-brand > span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.fx-theme-pixel .fx-title-swap .fx-title-hero { animation: none; }
+.fx-theme-pixel .fx-pick-art { border: 3px solid #0a0a06; }
+.fx-theme-pixel .fx-pick.is-picked .fx-pick-art { box-shadow: 0 0 0 3px var(--fx-ember), 5px 5px 0 3px rgba(0,0,0,0.5); }
+.fx-theme-pixel .fx-pick-name { font-size: 13px; } .fx-theme-pixel .fx-pick-power { font-size: 11px; line-height: 1.25; height: 56px; }
 @media (prefers-reduced-motion: reduce) { .fx-menu *, .fx-menu *::before, .fx-menu *::after { animation-duration: 0.01s !important; animation-delay: 0s !important; transition-duration: 0.01s !important; } }
 `;
 
@@ -3536,23 +3657,134 @@ function FxScreen({ title, sub, onBack, backLabel, children, eyebrow }) {
   );
 }
 
-function FxHeroSelect({ onPick, onBuildDeck, onPlayCpu, onShowLeaderboard, onShowQuests, onShowShop, onShowSettings, myProfile, myLegendaryRank, customDecks }) {
+
+// Phone held upright: the main screen gets an account badge with a pop-up menu and a compact hero picker.
+function useIsPhone() {
+  const q = () => typeof window !== "undefined" && window.innerWidth <= 700 && window.innerHeight > window.innerWidth;
+  const [v, setV] = useState(q);
+  useEffect(() => {
+    const on = () => setV(q());
+    window.addEventListener("resize", on); window.addEventListener("orientationchange", on);
+    return () => { window.removeEventListener("resize", on); window.removeEventListener("orientationchange", on); };
+  }, []);
+  return v;
+}
+function fxRankLine(profile, legendaryRank) {
+  if (!profile) return { tier: "Bronze", detail: "" };
+  const tier = profile.tier || "Bronze";
+  if (tier === "Legendary") return { tier, detail: legendaryRank ? `Top tier — you're #${legendaryRank} this month.` : "Top tier — calculating your place..." };
+  const left = Math.max(0, 5 - (profile.winStreak || 0));
+  return { tier, detail: `You need ${left} more win${left === 1 ? "" : "s"} in a row to rank up.` };
+}
+function FxUserBadge({ a, onOpen }) {
+  const tier = a.myProfile ? (a.myProfile.tier || "Bronze") : "…";
+  return (
+    <button type="button" className="fx-badge" onClick={onOpen} aria-label="Open menu">
+      <span>
+        <span className="fx-badge-name" style={{ display: "block" }}>{a.myFirstName || "Survivor"}</span>
+        <span className="fx-badge-rank" style={{ display: "block" }}>{tier}</span>
+        <span className="fx-badge-bullets" style={{ display: "block" }}>{a.profileLoading ? "…" : `${a.myProfile?.bullets || 0} Bullets`}</span>
+      </span>
+      <span className="fx-burger" aria-hidden="true"><i /><i /><i /></span>
+    </button>
+  );
+}
+function FxUserMenu({ a, onClose, onNav, onRules }) {
+  const rank = fxRankLine(a.myProfile, a.myLegendaryRank);
+  const tierBar = { Bronze: "#c98a48", Silver: "#c9c9c9", Gold: "#e8c25a", Legendary: "#b36cf0" }[rank.tier] || "var(--fx-rust)";
+  const items = [["shop", "Shop"], ["leaderboard", "Leaderboards"], ["quests", "Quests"], ["rules", "Rules"], ["settings", "Settings"]];
+  return (
+    <div className="fx-umenu-back" onClick={onClose}>
+      <div className="fx-umenu" role="dialog" aria-label="Menu" onClick={(e) => e.stopPropagation()}>
+        <button type="button" className="fx-umenu-close" onClick={onClose} aria-label="Close menu">×</button>
+        <div className="fx-umenu-name" style={{ "--k": 0 }}>{a.myFirstName || "Survivor"}</div>
+        <div className="fx-umenu-bullets" style={{ "--k": 1 }}>You own<b>{a.profileLoading ? "…" : (a.myProfile?.bullets || 0)}</b>Bullets</div>
+        <div className="fx-umenu-rank" style={{ "--k": 2, "--tier": tierBar }}><b>Rank · {rank.tier}</b><span>{rank.detail}</span></div>
+        <div className="fx-umenu-online" style={{ "--k": 3 }}><span className="fx-live" />{a.onlineCount === null ? "…" : `${a.onlineCount} ${a.onlineCount === 1 ? "player" : "players"}`} online</div>
+        <div className="fx-umenu-nav" style={{ animation: "none" }}>
+          {items.map(([id, label], i) => (
+            <button key={id} type="button" className={id === "shop" ? "fx-shop" : undefined} style={{ "--k": i }} onClick={() => { onClose(); if (id === "rules") onRules(); else onNav(id); }}>{label}</button>
+          ))}
+        </div>
+        <button type="button" className="fx-umenu-out" style={{ "--k": 9 }} onClick={() => { onClose(); a.signOutUser(); }}>Log out</button>
+      </div>
+    </div>
+  );
+}
+// The phone version of the hero picker: name above each picture, ability below, and the
+// page title turns into the chosen hero's name. Every part has a fixed height, so nothing moves.
+function FxHeroPickPhone({ hero, setHero, setLockedHeroClicked, myProfile, customDecks, onPick, onBuildDeck, onPlayCpu }) {
+  const hasCustom = hero && customDecks && customDecks[hero];
+  return (
+    <div>
+      <div className="fx-title-swap" aria-live="polite">
+        <div className={hero ? "is-out" : undefined}>Choose your survivor</div>
+        {hero && <div key={hero} className="fx-title-hero" style={{ color: dxFaction(hero).c }}>{hero}</div>}
+      </div>
+      <div className={"fx-picks" + (hero ? " has-pick" : "")}>
+        {HEROES.map((h, i) => {
+          const locked = !isHeroUnlocked(h, myProfile);
+          return (
+            <button key={h} type="button" className={"fx-pick" + (hero === h ? " is-picked" : "") + (locked ? " is-locked" : "")} style={{ "--i": i, "--fc": dxFaction(h).c }}
+              onClick={() => { if (locked) setLockedHeroClicked(h); else setHero(h); }}>
+              <div className="fx-pick-name">{h}</div>
+              <div className="fx-pick-art">
+                <div className="fx-hero-art" style={{ position: "absolute", inset: 0 }}><DxHeroArt hero={h} /></div>
+                <div className="fx-scan" />
+                {locked && <div className="fx-tag fx-tag-lock" style={{ top: 5, left: 5 }}>Locked</div>}
+                {customDecks && customDecks[h] && !locked && <div className="fx-tag fx-tag-custom" style={{ top: 5, right: 5 }}>Custom</div>}
+              </div>
+              <div className="fx-pick-power">{HERO_POWERS[h].name}: {HERO_POWERS[h].desc}</div>
+            </button>
+          );
+        })}
+      </div>
+      <div className="fx-phone-actions">
+        <div className="fx-sub">{!hero ? "Pick a survivor, then choose a game mode." : hasCustom ? "Using your custom deck for this hero." : "Using the default preset deck."}</div>
+        <button className="fx-btn fx-btn-primary" style={{ marginTop: 8 }} disabled={!hero} onClick={() => onPick(hero)}>Find Match →</button>
+        <div className="fx-phone-row">
+          <button className="fx-btn" disabled={!hero} onClick={() => onPlayCpu(hero)}>Play vs CPU</button>
+          <button className="fx-btn" disabled={!hero} onClick={() => onBuildDeck(hero)}>{hasCustom ? "Edit Deck" : "Build Deck"}</button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function FxHeroSelect({ onPick, onBuildDeck, onPlayCpu, onShowLeaderboard, onShowQuests, onShowShop, onShowSettings, onShowRules, phone, myProfile, myLegendaryRank, customDecks }) {
   const [hero, setHero] = useState(null);
-  const [showRules, setShowRules] = useState(false);
   const [lockedHeroClicked, setLockedHeroClicked] = useState(null);
   const hasCustom = hero && customDecks && customDecks[hero];
   const tier = myProfile ? (myProfile.tier || "Bronze") : null;
   const left = myProfile ? Math.max(0, 5 - (myProfile.winStreak || 0)) : 0;
+  if (phone) {
+    return (
+      <div>
+        <FxHeroPickPhone hero={hero} setHero={setHero} setLockedHeroClicked={setLockedHeroClicked} myProfile={myProfile} customDecks={customDecks} onPick={onPick} onBuildDeck={onBuildDeck} onPlayCpu={onPlayCpu} />
+        {lockedHeroClicked && (
+          <div className="fx-modal-back" onClick={() => setLockedHeroClicked(null)}>
+            <div className="fx-modal" onClick={(e) => e.stopPropagation()}>
+              <div className="fx-h1" style={{ margin: 0, fontSize: 22 }}>{lockedHeroClicked} is locked</div>
+              <p className="fx-sub" style={{ marginTop: 10 }}>Unlock this hero in the Shop to play as them.</p>
+              <div className="fx-actions" style={{ justifyContent: "center", marginTop: 18 }}>
+                <button className="fx-btn fx-btn-primary" onClick={() => { setLockedHeroClicked(null); onShowShop(); }}>Go to Shop</button>
+                <button className="fx-btn" onClick={() => setLockedHeroClicked(null)}>Close</button>
+              </div>
+            </div>
+          </div>
+        )}
+      </div>
+    );
+  }
   return (
     <div>
       <div className="fx-nav">
         <button onClick={onShowLeaderboard}>Leaderboard</button>
         <button onClick={onShowQuests}>Quests</button>
         <button onClick={onShowShop}>Shop</button>
-        <button onClick={() => setShowRules(true)}>Rules</button>
+        <button onClick={onShowRules}>Rules</button>
         <button onClick={onShowSettings}>Settings</button>
       </div>
-      {showRules && <RulesModal themed onClose={() => setShowRules(false)} />}
 
       <div className="fx-eyebrow" style={{ marginTop: 30 }}>
         {myProfile ? <>Rank · {tier} — {tier === "Legendary" ? (myLegendaryRank ? `#${myLegendaryRank}` : "calculating...") : `${left} win${left === 1 ? "" : "s"} left to promote`}</> : "Welcome, survivor"}
@@ -3625,8 +3857,7 @@ function FxHeroSelect({ onPick, onBuildDeck, onPlayCpu, onShowLeaderboard, onSho
 function FxDeckBuilder({ hero, initialDeck, onSave, onCancel, myProfile, onBuyCard }) {
   // Same deck rules as DeckBuilderScreen: 30 cards, this hero's cards or neutrals, copy limits per card.
   const pool = CARD_DB.filter((c) => c.hero === hero || !c.hero);
-  const [counts, setCounts] = useState(() => {
-    const c = {};
+  const [counts, setCounts] = useState(() => {;
     if (initialDeck) initialDeck.forEach((id) => { c[id] = (c[id] || 0) + 1; });
     return c;
   });
@@ -3997,6 +4228,9 @@ function FxApp({ a }) {
   const pixel = display.mode === "pixel";
   const s = a.screen;
   const go = a.setScreen;
+  const phone = useIsPhone();
+  const [menuOpen, setMenuOpen] = useState(false);
+  const [rulesOpen, setRulesOpen] = useState(false);
   return (
     <div className={"fx-menu fx-theme-" + (pixel ? "pixel" : "rust")}>
       <style>{GLOBAL_STYLE}</style>
@@ -4006,6 +4240,12 @@ function FxApp({ a }) {
       {s !== "game" && <FxBackdrop />}
       {s !== "game" && (
         <div className="fx-wrap">
+          {phone ? (
+            <div className="fx-top fx-top-phone">
+              <h1 className="fx-brand"><DxTrefoil size={20} color="#e9944a" dark="#17110d" /><span>Atomic <b>Bunch</b></span></h1>
+              <FxUserBadge a={a} onOpen={() => setMenuOpen(true)} />
+            </div>
+          ) : (
           <div className="fx-top">
             <h1 className="fx-brand"><DxTrefoil size={24} color="#e9944a" dark="#17110d" />Atomic <b>Bunch</b></h1>
             <div className="fx-top-right">
@@ -4015,6 +4255,9 @@ function FxApp({ a }) {
               <button className="fx-link" onClick={a.signOutUser}>Sign out</button>
             </div>
           </div>
+          )}
+          {menuOpen && <FxUserMenu a={a} onClose={() => setMenuOpen(false)} onNav={(id) => go(id)} onRules={() => setRulesOpen(true)} />}
+          {rulesOpen && <RulesModal themed onClose={() => setRulesOpen(false)} />}
           {a.screenNotice && <div className="fx-notice">{a.screenNotice}</div>}
           {a.profileSyncError && (
             <div className="fx-notice">
@@ -4029,7 +4272,7 @@ function FxApp({ a }) {
               <button className="fx-btn fx-btn-sm" style={{ marginLeft: 8 }} onClick={a.dismissReconnect}>Dismiss</button>
             </div>
           )}
-          {s === "select" && <FxHeroSelect onPick={a.startSearch} onBuildDeck={a.openDeckBuilder} onPlayCpu={a.startCpuMatch} onShowLeaderboard={() => go("leaderboard")} onShowQuests={() => go("quests")} onShowShop={() => go("shop")} onShowSettings={() => go("settings")} myProfile={a.myProfile} myLegendaryRank={a.myLegendaryRank} customDecks={a.customDecks} />}
+          {s === "select" && <FxHeroSelect onPick={a.startSearch} onBuildDeck={a.openDeckBuilder} onPlayCpu={a.startCpuMatch} onShowLeaderboard={() => go("leaderboard")} onShowQuests={() => go("quests")} onShowShop={() => go("shop")} onShowSettings={() => go("settings")} onShowRules={() => setRulesOpen(true)} phone={phone} myProfile={a.myProfile} myLegendaryRank={a.myLegendaryRank} customDecks={a.customDecks} />}
           {s === "settings" && <FxSettings onBack={() => go("select")} />}
           {s === "leaderboard" && <FxLeaderboard onBack={() => go("select")} myProfile={a.myProfile} sessionId={a.sessionId} profileLoading={a.profileLoading} />}
           {s === "quests" && <FxQuests onBack={() => go("select")} myProfile={a.myProfile} profileLoading={a.profileLoading} />}
