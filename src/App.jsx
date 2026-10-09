@@ -3813,6 +3813,10 @@ const MENU_STYLE = `
 .fx-pick.is-picked .fx-scan { animation: fxScan 0.75s ease-out; }
 .fx-pick.is-locked .fx-pick-art .fx-hero-art { filter: grayscale(1) brightness(0.5); }
 .fx-phone-actions { margin-top: 14px; }
+.fx-notices-float { position: fixed; left: 10px; right: 10px; bottom: calc(10px + env(safe-area-inset-bottom, 0px)); z-index: 70; display: flex; flex-direction: column; gap: 8px; pointer-events: none; }
+.fx-notices-float:empty { display: none; }
+.fx-notices-float .fx-notice { background: #2b1714; } .fx-notices-float .fx-notice-ok { background: #1d2614; }
+.fx-notices-float .fx-notice { margin: 0; pointer-events: auto; box-shadow: 0 10px 30px rgba(0,0,0,0.6); animation: fxRise 0.35s ease-out both; }
 .fx-phone-actions .fx-sub { height: 20px; line-height: 20px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; font-size: 13px; }
 .fx-phone-actions .fx-btn { width: 100%; padding-left: 8px; padding-right: 8px; }
 .fx-phone-row { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; margin-top: 8px; }
@@ -4534,6 +4538,10 @@ function FxApp({ a }) {
           )}
           {menuOpen && <FxUserMenu a={a} onClose={() => setMenuOpen(false)} onNav={(id) => go(id)} onRules={() => setRulesOpen(true)} />}
           {rulesOpen && <RulesModal themed onClose={() => setRulesOpen(false)} />}
+          {/* On phones the messages float over the page instead of pushing it down: a banner that
+              appears a moment after the page loads must never move "Find Match" under the finger
+              that is about to tap "Play vs CPU". */}
+          <div className={phone ? "fx-notices-float" : undefined}>
           {a.screenNotice && <div className="fx-notice">{tr(a.screenNotice)}</div>}
           {a.profileSyncError && (
             <div className="fx-notice">
@@ -4547,6 +4555,7 @@ function FxApp({ a }) {
               <button className="fx-btn fx-btn-sm" style={{ marginLeft: 8 }} onClick={a.dismissReconnect}>{tr("Dismiss")}</button>
             </div>
           )}
+          </div>
           {s === "select" && <FxHeroSelect onPick={a.startSearch} onBuildDeck={a.openDeckBuilder} onPlayCpu={a.startCpuMatch} onShowLeaderboard={() => go("leaderboard")} onShowQuests={() => go("quests")} onShowShop={() => go("shop")} onShowSettings={() => go("settings")} onShowRules={() => setRulesOpen(true)} phone={phone} myProfile={a.myProfile} myLegendaryRank={a.myLegendaryRank} customDecks={a.customDecks} />}
           {s === "settings" && <FxSettings onBack={() => go("select")} />}
           {s === "leaderboard" && <FxLeaderboard onBack={() => go("select")} myProfile={a.myProfile} sessionId={a.sessionId} profileLoading={a.profileLoading} />}
