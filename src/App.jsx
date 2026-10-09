@@ -3618,6 +3618,8 @@ const MENU_STYLE = `
   --fx-font: ${DX_FONT}; --fx-display: ${DX_DISPLAY_FONT}; --fx-thin: ${DX_THIN_FONT};
   position: relative; min-height: 100vh; color: var(--fx-text); font-family: var(--fx-font); font-size: 15px; line-height: 1.45; -webkit-tap-highlight-color: transparent; }
 .fx-menu *, .fx-menu *::before, .fx-menu *::after { box-sizing: border-box; }
+.fx-menu { overflow-x: clip; }
+body { margin: 0; } /* the browser's default 8px margin made every menu page scroll a little on phones */
 .fx-menu ::-webkit-scrollbar { width: 8px; height: 8px; } .fx-menu ::-webkit-scrollbar-thumb { background: var(--fx-line); }
 .fx-backdrop { position: fixed; inset: 0; z-index: 0; overflow: hidden;
   background: radial-gradient(ellipse 90% 60% at 50% -10%, rgba(196,98,45,0.32), rgba(0,0,0,0) 60%), radial-gradient(ellipse 60% 40% at 88% 108%, rgba(196,98,45,0.18), rgba(0,0,0,0) 60%), linear-gradient(180deg,#1b1613,#0c0a09); }
@@ -3792,7 +3794,7 @@ const MENU_STYLE = `
 .fx-umenu-out { width: 100%; margin-top: 18px; padding: 12px 14px; background: linear-gradient(180deg,#c94a35,#8f2a1c); border: 1px solid #e07a66; border-radius: var(--fx-radius); color: #fff; font-family: var(--fx-display); font-stretch: condensed; text-transform: uppercase; letter-spacing: 0.2em; font-size: 14px; font-weight: 700; cursor: pointer; }
 .fx-umenu-out:active { filter: brightness(1.15); }
 /* compact hero picker */
-.fx-title-swap { position: relative; height: 34px; margin: 22px 0 4px; }
+.fx-title-swap { position: relative; height: 34px; margin: 22px 0 4px; overflow: hidden; }
 .fx-title-swap > div { position: absolute; left: 0; right: 0; top: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; font-family: var(--fx-thin); font-weight: 200; text-transform: uppercase; letter-spacing: 0.18em; font-size: 19px; line-height: 34px; transition: opacity 0.3s, transform 0.3s; }
 .fx-title-swap .is-out { opacity: 0; transform: translateY(-8px); }
 /* hero name slides in using transform/opacity only (letter-spacing animations relayout every frame and stutter on phones),
@@ -3813,6 +3815,12 @@ const MENU_STYLE = `
 .fx-pick.is-picked .fx-scan { animation: fxScan 0.75s ease-out; }
 .fx-pick.is-locked .fx-pick-art .fx-hero-art { filter: grayscale(1) brightness(0.5); }
 .fx-phone-actions { margin-top: 14px; }
+/* upright phones: hero pictures shrink with the screen height so everything fits without scrolling */
+@media (orientation: portrait) and (max-width: 700px) {
+  .fx-picks:not(.fx-picks-6) .fx-pick-art { aspect-ratio: auto; height: max(84px, min(calc((100vw - 64px) / 3 * 4 / 3), calc((100vh - 470px) / 2))); height: max(84px, min(calc((100vw - 64px) / 3 * 4 / 3), calc((100dvh - 470px) / 2))); }
+  .fx-wrap:not(.fx-wrap-land) { padding-bottom: 14px; }
+  .fx-theme-pixel .fx-picks:not(.fx-picks-6) .fx-pick-art { height: max(78px, min(calc((100vw - 64px) / 3 * 4 / 3), calc((100vh - 560px) / 2))); height: max(78px, min(calc((100vw - 64px) / 3 * 4 / 3), calc((100dvh - 560px) / 2))); }
+}
 .fx-notices-float { position: fixed; left: 10px; right: 10px; bottom: calc(10px + env(safe-area-inset-bottom, 0px)); z-index: 70; display: flex; flex-direction: column; gap: 8px; pointer-events: none; }
 .fx-notices-float:empty { display: none; }
 .fx-notices-float .fx-notice { background: #2b1714; } .fx-notices-float .fx-notice-ok { background: #1d2614; }
@@ -3921,6 +3929,30 @@ function FxScreen({ title, sub, onBack, backLabel, children, eyebrow }) {
 }
 
 
+// Phone browsers slide their address bar in and out while the page scrolls, which moves the whole
+// page under the finger. A button only reacts if the finger went down on that same button and the
+// page has been still for a moment - otherwise a tap meant for "Play vs CPU" could land on "Find Match".
+let _fxLastShift = 0;
+if (typeof window !== "undefined") {
+  const mark = () => { _fxLastShift = Date.now(); };
+  window.addEventListener("scroll", mark, { passive: true });
+  window.addEventListener("resize", mark);
+  if (window.visualViewport) { window.visualViewport.addEventListener("resize", mark); window.visualViewport.addEventListener("scroll", mark); }
+}
+function useTapGuard() {
+  const down = useRef({ id: null, t: 0, y: 0 });
+  return (id, action) => ({
+    onPointerDown: (e) => { down.current = { id, t: Date.now(), y: e.currentTarget.getBoundingClientRect().top }; },
+    onClick: (e) => {
+      const d = down.current, now = Date.now();
+      const moved = Math.abs(e.currentTarget.getBoundingClientRect().top - d.y) > 4;
+      if (d.id !== id || now - d.t > 1500 || moved || now - _fxLastShift < 350) return; // stray tap from a shifting page: ignore
+      down.current = { id: null, t: 0, y: 0 };
+      action();
+    },
+  });
+}
+
 // Phones (upright or on their side) get an account badge with a pop-up menu and a compact hero picker.
 // Returns "portrait", "landscape" or false (desktop / tablet keep the full layout).
 function useIsPhone() {
@@ -3983,6 +4015,7 @@ function FxUserMenu({ a, onClose, onNav, onRules }) {
 // The phone version of the hero picker: name above each picture, ability below, and the
 // page title turns into the chosen hero's name. Every part has a fixed height, so nothing moves.
 function FxHeroPickPhone({ hero, setHero, setLockedHeroClicked, myProfile, customDecks, onPick, onBuildDeck, onPlayCpu, land }) {
+  const guard = useTapGuard();
   const hasCustom = hero && customDecks && customDecks[hero];
   return (
     <div>
@@ -4011,10 +4044,10 @@ function FxHeroPickPhone({ hero, setHero, setLockedHeroClicked, myProfile, custo
       </div>
       <div className="fx-phone-actions">
         <div className="fx-sub">{!hero ? tr("Pick a survivor, then choose a game mode.") : hasCustom ? tr("Using your custom deck for this hero.") : tr("Using the default preset deck.")}</div>
-        <button className="fx-btn fx-btn-primary" style={{ marginTop: 8 }} disabled={!hero} onClick={() => onPick(hero)}>{tr("Find Match →")}</button>
+        <button className="fx-btn fx-btn-primary" style={{ marginTop: 8 }} disabled={!hero} {...guard("find", () => onPick(hero))}>{tr("Find Match →")}</button>
         <div className="fx-phone-row">
-          <button className="fx-btn" disabled={!hero} onClick={() => onPlayCpu(hero)}>{tr("Play vs CPU")}</button>
-          <button className="fx-btn" disabled={!hero} onClick={() => onBuildDeck(hero)}>{hasCustom ? tr("Edit Deck") : tr("Build Deck")}</button>
+          <button className="fx-btn" disabled={!hero} {...guard("cpu", () => onPlayCpu(hero))}>{tr("Play vs CPU")}</button>
+          <button className="fx-btn" disabled={!hero} {...guard("deck", () => onBuildDeck(hero))}>{hasCustom ? tr("Edit Deck") : tr("Build Deck")}</button>
         </div>
       </div>
       </div>
