@@ -275,17 +275,25 @@ function sellCardLogic(profile, cardId, diamond) {
   return { unlockedCardIds: (profile.unlockedCardIds || []).filter((id) => id !== cardId), bullets: bullets + sellValue(card, false) };
 }
 // sells every Diamond copy beyond the first of each card
-function sellDiamondDuplicatesLogic(profile) {
-  const diamonds = { ...(profile.diamonds || {}) };
+// How many Diamond copies are worth keeping: 2 of a card (a full deck's worth), 1 of a Unique.
+function diamondKeepMax(card) { return card && card.rarity === "unique" ? 1 : 2; }
+// Sells every copy above that limit (mutates `diamonds`, returns what it sold).
+function sellDiamondExtras(diamonds) {
   let gain = 0, sold = 0;
   Object.keys(diamonds).forEach((id) => {
     const card = findCard(id);
-    if (!card || diamonds[id] <= 1) return;
-    const n = diamonds[id] - 1;
+    const keep = diamondKeepMax(card);
+    if (!card || !(diamonds[id] > keep)) return;
+    const n = diamonds[id] - keep;
     gain += n * sellValue(card, true);
     sold += n;
-    diamonds[id] = 1;
+    diamonds[id] = keep;
   });
+  return { gain, sold };
+}
+function sellDiamondDuplicatesLogic(profile) {
+  const diamonds = { ...(profile.diamonds || {}) };
+  const { gain, sold } = sellDiamondExtras(diamonds);
   return { updated: { diamonds, bullets: (profile.bullets || 0) + gain }, sold, gain };
 }
 
