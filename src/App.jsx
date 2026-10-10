@@ -4,7 +4,7 @@ import { auth, db, functions, signInWithGoogle, signOutUser } from "./firebase.j
 import { onAuthStateChanged } from "firebase/auth";
 import {
   doc, getDoc, getDocFromServer, setDoc, deleteDoc, onSnapshot,
-  collection, query, where, orderBy, limit, getDocs, runTransaction,
+  collection, query, where, orderBy, limit, getDocs, runTransaction, getCountFromServer,
 } from "firebase/firestore";
 import { httpsCallable } from "firebase/functions";
 
@@ -4078,7 +4078,7 @@ function FxUserMenu({ a, onClose, onNav, onRules }) {
         <div className="fx-umenu-name" style={{ "--k": 0 }}>{a.myFirstName || tr("Survivor")}</div>
         <div className="fx-umenu-bullets" style={{ "--k": 1 }}>{(() => { const parts = trParts("You own {n} Bullets", { n: a.myProfile?.bullets || 0 }); return <>{parts[0]}<b>{a.profileLoading ? "…" : (a.myProfile?.bullets || 0)}</b>{parts[1] || ""}</>; })()}</div>
         <div className="fx-umenu-rank" style={{ "--k": 2, "--tier": tierBar }}><b>{tr("Rank · {tier}", { tier: tierL(rank.tier) })}</b><span>{rank.detail}</span></div>
-        <div className="fx-umenu-online" style={{ "--k": 3 }}><span className="fx-live" />{a.onlineCount === null ? "…" : tr("{n} players online", { n: a.onlineCount })}</div>
+        {a.onlineCount !== null && <div className="fx-umenu-online" style={{ "--k": 3 }}><span className="fx-live" />{tr("{n} players online", { n: a.onlineCount })}</div>}
         <div className="fx-umenu-nav" style={{ animation: "none" }}>
           {items.map(([id, label], i) => (
             <button key={id} type="button" className={id === "shop" ? "fx-shop" : undefined} style={{ "--k": i }} onClick={() => { onClose(); if (id === "rules") onRules(); else if (id === "tutorial") { if (TUT.app.start) TUT.app.start(0); } else onNav(id); }}>{label}</button>
@@ -4640,7 +4640,7 @@ function FxApp({ a }) {
           <div className="fx-top">
             <h1 className="fx-brand fx-brand-logo"><BrandLogo variant={pixel ? "pixel" : "white"} height={pixel ? 58 : 52} /></h1>
             <div className="fx-top-right">
-              <span><span className="fx-live" />{a.onlineCount === null ? "…" : tr("{n} players online", { n: a.onlineCount })}</span>
+              {a.onlineCount !== null && <span><span className="fx-live" />{tr("{n} players online", { n: a.onlineCount })}</span>}
               <span className="fx-chip">{a.profileLoading ? "…" : tr("{n} Bullets", { n: a.myProfile?.bullets || 0 })}</span>
               <span>{a.myFirstName}</span>
               <button className="fx-link" onClick={a.signOutUser}>{tr("Sign out")}</button>
@@ -8572,23 +8572,30 @@ export default function App() {
   // product from Firestore). Every 30s we mark ourselves as seen and count
   // everyone seen in the last 60s. This reuses the existing users/{uid}
   // self-write rule as-is — no Firestore rules changes needed.
+  const isAdminUser = !!(user && user.email && ADMIN_EMAILS.includes(user.email));
   useEffect(() => {
     if (!sessionId) return;
     let cancelled = false;
-    async function heartbeatAndCount() {
+    async function heartbeat() {
+      try { await setDoc(doc(db, "users", sessionId), { lastSeen: Date.now() }, { merge: true }); }
+      catch (e) { console.error("Presence heartbeat failed:", e); }
+    }
+    async function countOnline() {
       try {
-        await setDoc(doc(db, "users", sessionId), { lastSeen: Date.now() }, { merge: true });
-        const cutoff = Date.now() - 60000;
-        const snap = await getDocs(query(collection(db, "users"), where("lastSeen", ">", cutoff)));
-        if (!cancelled) setOnlineCount(snap.size);
+        // "online" = seen in the last 6 minutes (everyone checks in every 5)
+        const res = await getCountFromServer(query(collection(db, "users"), where("lastSeen", ">", Date.now() - 360000)));
+        if (!cancelled) setOnlineCount(res.data().count);
       } catch (e) {
-        console.error("Presence heartbeat failed:", e);
+        console.error("Online count failed:", e);
       }
     }
-    heartbeatAndCount();
-    const interval = setInterval(heartbeatAndCount, 30000);
-    return () => { cancelled = true; clearInterval(interval); };
-  }, [sessionId]);
+    heartbeat();
+    const beat = setInterval(heartbeat, 300000);
+    let count = null;
+    if (isAdminUser) { setTimeout(countOnline, 1500); count = setInterval(countOnline, 60000); }
+    else setOnlineCount(null);
+    return () => { cancelled = true; clearInterval(beat); if (count) clearInterval(count); };
+  }, [sessionId, isAdminUser]);
 
   useEffect(() => {
     if (myProfile?.tier !== "Legendary" || !sessionId) { setMyLegendaryRank(null); return; }
@@ -9282,7 +9289,7 @@ export default function App() {
               >
                 {tr("Shop")}</button>
             </div>
-            <div style={{ fontSize: 10, color: "#888", marginTop: 2 }}>{tr("Players Online:")}{" "}{onlineCount === null ? "…" : onlineCount}</div>
+            {onlineCount !== null && <div style={{ fontSize: 10, color: "#888", marginTop: 2 }}>{tr("Players Online:")}{" "}{onlineCount}</div>}
           </div>
         </div>
       )}
