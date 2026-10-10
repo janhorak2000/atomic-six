@@ -73,6 +73,15 @@ function requireAuth(request) {
   return request.auth.uid;
 }
 
+// Emails are private: they live in userEmails/{uid}, which nobody can read
+// from the browser (see firestore.rules). The public users/{uid} profile -
+// readable by anyone for the leaderboard - never stores an email.
+function rememberEmail(tx, uid, auth) {
+  const email = auth && auth.token && auth.token.email;
+  if (email) tx.set(db.collection("userEmails").doc(uid), { email: String(email).toLowerCase() }, { merge: true });
+}
+function withoutEmail(p) { const { email, ...rest } = p || {}; return rest; }
+
 /* =========================================================================
    claimMatchReward — the big one. Called once by each player right after a
    real (non-CPU) match ends. Recomputes wins/losses/tier/streak and weekly
@@ -167,10 +176,11 @@ exports.claimMatchReward = onCall({ enforceAppCheck: true, invoker: "public" }, 
       winReward: wr.winReward,
       bullets,
       displayName: existing.displayName || me.displayName || "Player",
-      email: existing.email || null,
     };
+    profile = withoutEmail(profile);
 
-    tx.set(userRef, profile, { merge: true });
+    tx.set(userRef, { ...profile, email: FieldValue.delete() }, { merge: true });
+    rememberEmail(tx, uid, request.auth);
     tx.update(matchRef, { [`rewardsClaimed.${uid}`]: true });
 
     return { alreadyClaimed: false, profile };
@@ -200,14 +210,14 @@ exports.claimFirstHero = onCall({ enforceAppCheck: true, invoker: "public" }, as
     }
     const bonusIds = randomNeutralBonusCardIds();
     const profile = {
-      ...existing,
-      email: (auth.token && auth.token.email) || existing.email || null,
+      ...withoutEmail(existing),
       displayName: (auth.token && auth.token.name) || existing.displayName || "Player",
       unlockedHeroes: [hero],
       unlockedCardIds: bonusIds,
       bullets: existing.bullets || 0,
     };
-    tx.set(userRef, profile, { merge: true });
+    tx.set(userRef, { ...profile, email: FieldValue.delete() }, { merge: true });
+    rememberEmail(tx, uid, auth);
     return profile;
   });
 });
@@ -308,9 +318,10 @@ async function withProfile(request, fn) {
       if (!snap.exists) throw new HttpsError("failed-precondition", "No profile yet.");
       const profile = snap.data();
       const out = fn(profile);
-      tx.set(userRef, out.updated, { merge: true });
+      tx.set(userRef, { ...out.updated, ...(profile.email !== undefined ? { email: FieldValue.delete() } : {}) }, { merge: true });
+      rememberEmail(tx, uid, request.auth);
       // Plain JSON copy, so Firestore types (timestamps etc.) can't trip the reply.
-      return JSON.parse(JSON.stringify({ ...out.extra, profile: { ...profile, ...out.updated } }));
+      return JSON.parse(JSON.stringify({ ...out.extra, profile: withoutEmail({ ...profile, ...out.updated }) }));
     });
   } catch (e) {
     console.error("diamond/shop call failed", e);
@@ -361,9 +372,16 @@ exports.adminGrantBullets = onCall({ enforceAppCheck: true, invoker: "public" },
   if (!callerEmail || !ADMIN_EMAILS.includes(callerEmail)) {
     throw new HttpsError("permission-denied", "Not an admin.");
   }
-  const targetUid = request.data && request.data.targetUid;
+  let targetUid = request.data && request.data.targetUid;
   const amount = Number(request.data && request.data.amount);
-  if (!targetUid || typeof targetUid !== "string") throw new HttpsError("invalid-argument", "targetUid is required.");
+  const email = request.data && typeof request.data.email === "string" ? request.data.email.trim().toLowerCase() : "";
+  if (!targetUid && email) {
+    let q = await db.collection("userEmails").where("email", "==", email).limit(1).get();
+    if (q.empty) q = await db.collection("users").where("email", "==", email).limit(1).get(); // not yet migrated
+    if (q.empty) throw new HttpsError("not-found", "No account found with this email.");
+    targetUid = q.docs[0].id;
+  }
+  if (!targetUid || typeof targetUid !== "string") throw new HttpsError("invalid-argument", "targetUid or email is required.");
   if (!Number.isFinite(amount) || amount <= 0 || amount > 100000) {
     throw new HttpsError("invalid-argument", "amount must be a positive number (max 100000 per grant).");
   }
@@ -376,4 +394,27 @@ exports.adminGrantBullets = onCall({ enforceAppCheck: true, invoker: "public" },
     tx.set(userRef, { bullets }, { merge: true });
     return { targetUid, bullets };
   });
+});
+
+/* =========================================================================
+   adminHideEmails — one-time clean-up (safe to run again). Moves every
+   email still sitting in a public users/{uid} profile into the private
+   userEmails/{uid} collection and removes it from the profile.
+   ========================================================================= */
+exports.adminHideEmails = onCall({ enforceAppCheck: true, invoker: "public" }, async (request) => {
+  requireAuth(request);
+  const callerEmail = request.auth.token && request.auth.token.email;
+  if (!callerEmail || !ADMIN_EMAILS.includes(callerEmail)) throw new HttpsError("permission-denied", "Not an admin.");
+  const snap = await db.collection("users").get();
+  let moved = 0, batch = db.batch(), n = 0;
+  for (const d of snap.docs) {
+    const e = d.get("email");
+    if (e === undefined) continue;
+    if (e) batch.set(db.collection("userEmails").doc(d.id), { email: String(e).toLowerCase() }, { merge: true });
+    batch.update(d.ref, { email: FieldValue.delete() });
+    moved++; n += 2;
+    if (n >= 400) { await batch.commit(); batch = db.batch(); n = 0; }
+  }
+  if (n > 0) await batch.commit();
+  return { moved, total: snap.size };
 });
