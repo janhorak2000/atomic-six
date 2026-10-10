@@ -1688,6 +1688,7 @@ const DELUXE_STYLE = `
 [data-dx-lane="me"].dx-drop-hot::before { border-color: rgba(255,220,120,0.95); background: rgba(255,200,80,0.08); box-shadow: inset 0 0 40px rgba(255,190,60,0.25); }
 .dx-drop-hot .dx-minion-frame, .dx-panel.dx-drop-hot { box-shadow: 0 0 0 4px #ff4a36, 0 0 26px 8px rgba(255,70,40,0.75) !important; }
 .dx-ghost { position: fixed; pointer-events: none; z-index: 900; filter: drop-shadow(0 18px 24px rgba(0,0,0,0.6)); transition: transform 0.08s linear; }
+.dx-ghost.dx-ghost-dia { filter: none; } /* a filter here would hide the table from the Diamond glass */
 
 /* ---- hero plate shatters at the end of a match ---- */
 .dx-hshatter { position: relative; width: 100%; height: 100%; }
@@ -1707,18 +1708,25 @@ const DELUXE_STYLE = `
 /* ---- Diamond card skins: Crystal Crown (see Dia* in j_shop) ---- */
 .dx-dia .dx-card { transform-style: flat; }
 .dx-dia-glass { position: absolute; left: 0; top: -60px; width: 240px; height: 396px; pointer-events: none; overflow: hidden;
-  background: linear-gradient(135deg, rgba(255,255,255,0.42), rgba(var(--dt),0.34) 35%, rgba(255,255,255,0.14) 55%, rgba(var(--dt),0.4) 80%, rgba(255,255,255,0.3));
-  backdrop-filter: blur(8px) saturate(1.5) brightness(1.15); -webkit-backdrop-filter: blur(8px) saturate(1.5) brightness(1.15); }
+  background: radial-gradient(ellipse at 28% 18%, rgba(255,255,255,0.28), rgba(255,255,255,0) 42%), radial-gradient(ellipse at 75% 85%, rgba(var(--dt),0.22), rgba(0,0,0,0) 50%),
+    linear-gradient(135deg, rgba(255,255,255,0.16), rgba(var(--dt),0.1) 35%, rgba(255,255,255,0.03) 55%, rgba(var(--dt),0.14) 80%, rgba(255,255,255,0.12));
+  box-shadow: inset 0 0 22px rgba(255,255,255,0.35), inset 0 0 4px rgba(255,255,255,0.8);
+  /* like looking through a polished stone: what is behind is softened, brighter and more colourful */
+  -webkit-backdrop-filter: blur(4px) saturate(1.8) brightness(1.15) contrast(1.08);
+  backdrop-filter: blur(4px) saturate(1.8) brightness(1.15) contrast(1.08); }
+.dx-dia-glass-flare { position: absolute; left: 0; top: -60px; width: 240px; height: 396px; pointer-events: none; overflow: hidden; }
 .dx-dia-flare { position: absolute; inset: 0; pointer-events: none; mix-blend-mode: screen; background-size: 260% 260%; animation: dxDiaFlare 5s ease-in-out infinite;
   background-image: linear-gradient(128deg, rgba(255,255,255,0) 0%, rgba(255,255,255,0) 30%, rgba(var(--dt),0.25) 41%, rgba(255,255,255,0.75) 46%, #fff 47.2%, rgba(255,255,255,0.75) 48.4%, rgba(var(--dt),0.25) 53%, rgba(255,255,255,0) 64%); }
 @keyframes dxDiaFlare { 0%, 100% { background-position: 62% 62%; } 50% { background-position: 38% 38%; } }
 .dx-dia .dx-card-frame { background: transparent; box-shadow: none; }
-.dx-dia .dx-card-inner { background: linear-gradient(180deg, rgba(var(--dt),0.16), rgba(10,14,22,0.22)); box-shadow: inset 0 0 0 1px rgba(255,255,255,0.55); }
+.dx-dia .dx-card-inner { background: linear-gradient(180deg, rgba(var(--dt),0.08), rgba(10,14,22,0.1)); box-shadow: inset 0 0 0 1px rgba(255,255,255,0.55); }
 .dx-dia .dx-card-art { box-shadow: 0 0 0 2px rgba(255,255,255,0.85), 0 0 12px rgba(var(--dt),0.9); }
-.dx-dia .dx-card-name { background: linear-gradient(180deg, rgba(var(--dt),0.5), rgba(10,14,22,0.7)); border-color: rgba(255,255,255,0.8); }
+.dx-dia .dx-card-name { background: linear-gradient(90deg, rgba(var(--dt),0.18) 0%, rgba(8,12,20,0.86) 24%, rgba(8,12,20,0.9) 50%, rgba(8,12,20,0.86) 76%, rgba(var(--dt),0.18) 100%); border-color: rgba(255,255,255,0.8); }
 .dx-dia .dx-card-text { background: linear-gradient(180deg, rgba(255,255,255,0.9), rgba(var(--dt),0.45)); box-shadow: inset 0 0 0 1px rgba(255,255,255,0.9), 0 0 10px rgba(var(--dt),0.5); }
 .dx-dia .dx-card-foot { color: rgb(var(--dt)); text-shadow: 0 0 4px rgba(0,0,0,0.95), 0 0 2px rgba(0,0,0,0.9); }
-.dx-dia > .dx-card { filter: drop-shadow(0 0 9px rgba(var(--dt),0.7)); }
+.dx-dia > .dx-card { filter: none; }
+.dx-dia .dx-dia-outline { filter: drop-shadow(0 0 7px rgba(var(--dt),0.85)); }
+.dx-lite .dx-dia .dx-dia-outline { filter: none; }
 .dx-dia .dx-card.dx-card-dim { filter: brightness(0.62) saturate(0.55) drop-shadow(0 0 6px rgba(var(--dt),0.4)); }
 .dx-dia .dx-badge-atk, .dx-dia .dx-badge-hp { z-index: 6; opacity: 1; }
 .dx-dia-over { position: absolute; left: 0; top: -60px; width: 240px; height: 396px; pointer-events: none; overflow: visible; }
@@ -5345,7 +5353,7 @@ function DxDragLayer({ drag, mode, stageScale }) {
     const s = (drag.w / DX_CARD_W) * 1.08;
     const w = DX_CARD_W * s, h = DX_CARD_H * s;
     return createPortal(
-      <div className={dxRootClass(mode) + " dx-ghost"} style={{ left: drag.x - w / 2, top: drag.y - h * 0.62, transform: `rotate(${drag.tilt}deg) scale(${drag.over ? 1.06 : 1})`, filter: drag.over ? "drop-shadow(0 0 18px rgba(255,200,80,0.8)) drop-shadow(0 18px 24px rgba(0,0,0,0.6))" : undefined }}>
+      <div className={dxRootClass(mode) + " dx-ghost" + (drag.payload.diamond ? " dx-ghost-dia" : "")} style={{ left: drag.x - w / 2, top: drag.y - h * 0.62, transform: `rotate(${drag.tilt}deg) scale(${drag.over ? 1.06 : 1})`, filter: drag.over && !drag.payload.diamond ? "drop-shadow(0 0 18px rgba(255,200,80,0.8)) drop-shadow(0 18px 24px rgba(0,0,0,0.6))" : undefined }}>
         <DeluxeCard card={drag.payload.card} scale={s} diamond={!!drag.payload.diamond} />
       </div>,
       document.body
@@ -6933,7 +6941,9 @@ const diaClip = (pts) => "polygon(" + pts.map(([x, y]) => `${x}px ${y + DIA_TOP}
 function diaSeed(str) { let h = 2166136261; for (let i = 0; i < str.length; i++) { h ^= str.charCodeAt(i); h = Math.imul(h, 16777619); } return (h >>> 0) || 1; }
 // the see-through crystal behind the card (blurs whatever is behind it) with the strong light flare
 function DiamondGlass({ pixel }) {
-  return <div className="dx-dia-glass" style={{ clipPath: diaClip(pixel ? DIA_CROWN_PX : DIA_CROWN) }}><div className="dx-dia-flare" /></div>;
+  // the flare sits in its own layer: a blend-mode child inside the glass would stop the glass seeing the table
+  const clip = diaClip(pixel ? DIA_CROWN_PX : DIA_CROWN);
+  return <><div className="dx-dia-glass" style={{ clipPath: clip }} /><div className="dx-dia-glass-flare" style={{ clipPath: clip }}><div className="dx-dia-flare" /></div></>;
 }
 // on top of the card: crystal outline and facets, a faint flare, random sparkles, the corner star; uniques get a gold gem on the crown
 function DiamondShine({ card, pixel }) {
@@ -6947,7 +6957,7 @@ function DiamondShine({ card, pixel }) {
   return (
     <>
       <div className="dx-dia-over" style={{ clipPath: diaClip(pts), opacity: 0.35 }}><div className="dx-dia-flare" /></div>
-      <svg className="dx-dia-over" viewBox={`0 0 240 ${336 + DIA_TOP}`}>
+      <svg className="dx-dia-over dx-dia-outline" viewBox={`0 0 240 ${336 + DIA_TOP}`}>
         <polygon points={pstr} fill="none" stroke={pixel ? "#0a0a06" : "rgba(255,255,255,0.95)"} strokeWidth={pixel ? 4 : 2.5} shapeRendering={pixel ? "crispEdges" : undefined} />
         {pixel
           ? <polygon points={pstr} fill="none" stroke="rgb(var(--dt))" strokeWidth="2" transform={`translate(120 ${168 + DIA_TOP}) scale(.975) translate(-120 -${168 + DIA_TOP})`} shapeRendering="crispEdges" />
