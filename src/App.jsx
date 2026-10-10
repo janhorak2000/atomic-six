@@ -6943,8 +6943,12 @@ function openCardManage(card) { shopSet({ manage: card }); }
 // readable text for a failed server call ("internal" = the server function couldn't be reached or crashed)
 function serverErrorText(e) {
   const code = (e && e.code) || "";
-  if (code === "functions/internal" || code === "functions/not-found" || code === "functions/unavailable" || (e && e.message === "internal"))
-    return "The server didn't answer. If you just updated the game, deploy the functions (firebase deploy --only functions).";
+  const reason = e && e.details && e.details.reason;
+  if (reason) return tr("Server error: {msg}", { msg: reason });
+  if (code === "functions/not-found")
+    return tr("This server function isn't deployed yet (functions/not-found). Run: firebase deploy --only functions");
+  if (code === "functions/internal" || code === "functions/unavailable" || (e && e.message === "internal"))
+    return tr("The server couldn't be reached ({code}).", { code: code || "internal" });
   return (e && e.message) || "Something went wrong.";
 }
 function myDiamondCount(profile, id) { return (profile && profile.diamonds && profile.diamonds[id]) || 0; }
