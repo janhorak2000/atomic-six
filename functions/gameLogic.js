@@ -268,8 +268,7 @@ function sellCardLogic(profile, cardId, diamond) {
   if (diamond) {
     const diamonds = { ...(profile.diamonds || {}) };
     if (!(diamonds[cardId] > 0)) throw gameError("failed-precondition", "You don't own that card.");
-    diamonds[cardId] -= 1;
-    if (diamonds[cardId] <= 0) delete diamonds[cardId];
+    diamonds[cardId] -= 1; // stays as 0 (a merge write can't delete a map key)
     return { diamonds, bullets: bullets + sellValue(card, true) };
   }
   if (!canSellNormal(card, profile)) throw gameError("failed-precondition", "This card can't be sold.");
