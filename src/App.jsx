@@ -1710,7 +1710,6 @@ const DELUXE_STYLE = `
 .dx-dia-glass { position: absolute; left: 0; top: -60px; width: 240px; height: 396px; pointer-events: none; overflow: hidden;
   background: radial-gradient(ellipse at 28% 18%, rgba(255,255,255,0.28), rgba(255,255,255,0) 42%), radial-gradient(ellipse at 75% 85%, rgba(var(--dt),0.22), rgba(0,0,0,0) 50%),
     linear-gradient(135deg, rgba(255,255,255,0.16), rgba(var(--dt),0.1) 35%, rgba(255,255,255,0.03) 55%, rgba(var(--dt),0.14) 80%, rgba(255,255,255,0.12));
-  box-shadow: inset 0 0 22px rgba(255,255,255,0.35), inset 0 0 4px rgba(255,255,255,0.8);
   /* like looking through a polished stone: what is behind is softened, brighter and more colourful */
   -webkit-backdrop-filter: blur(4px) saturate(1.8) brightness(1.15) contrast(1.08);
   backdrop-filter: blur(4px) saturate(1.8) brightness(1.15) contrast(1.08); }
@@ -2902,7 +2901,7 @@ function DxMinionFace({ m, card, showStatus, pixel, diamond }) {
   return (
     <>
       {diamond && <DiamondMinionCrown rarity={card.rarity} pixel={pixel} />}
-      <div className="dx-minion-frame" style={{ "--rf": r.frame, "--rs": r.solid, ...(diamond ? diaStyle(card.rarity).vars : {}), ...(diamond ? { boxShadow: `0 0 0 1px rgba(255,255,255,0.7) inset, 0 0 14px rgba(${DIA_TINT[card.rarity] ? DIA_TINT[card.rarity].rgb : "230,242,255"},0.8), 0 8px 14px rgba(0,0,0,0.6)` } : {}) }} />
+      <div className="dx-minion-frame" style={{ "--rf": r.frame, "--rs": r.solid, ...(diamond ? diaStyle(card.rarity).vars : {}), ...(diamond ? { boxShadow: `0 0 14px rgba(${DIA_TINT[card.rarity] ? DIA_TINT[card.rarity].rgb : "230,242,255"},0.8), 0 8px 14px rgba(0,0,0,0.6)` } : {}) }} />
       {diamond && <div style={{ position: "absolute", inset: 0, pointerEvents: "none", ...diaStyle(card.rarity).vars }}><DiamondMinionShine /></div>}
       <div className="dx-minion-art"><DeluxeArt card={card} /></div>
       <div className="dx-minion-name">{cardNameL(m)}</div>
@@ -7090,11 +7089,10 @@ function DiamondShine({ card, pixel }) {
         <polygon className="glow" points={pstr} fill="none" strokeWidth={pixel ? 6 : 5} strokeLinejoin={pixel ? "miter" : "round"} transform={`translate(120 ${168 + DIA_TOP}) scale(1.035) translate(-120 -${168 + DIA_TOP})`} shapeRendering={pixel ? "crispEdges" : undefined} />
       </svg>
       <svg className="dx-dia-over dx-dia-outline" viewBox={`0 0 240 ${336 + DIA_TOP}`}>
-        <polygon points={pstr} fill="none" stroke={pixel ? "#0a0a06" : "rgba(255,255,255,0.95)"} strokeWidth={pixel ? 4 : 2.5} shapeRendering={pixel ? "crispEdges" : undefined} />
-        {pixel
-          ? <polygon points={pstr} fill="none" stroke="rgb(var(--dt))" strokeWidth="2" transform={`translate(120 ${168 + DIA_TOP}) scale(.975) translate(-120 -${168 + DIA_TOP})`} shapeRendering="crispEdges" />
-          : <polygon points={inner} fill="none" stroke="rgba(var(--dt),0.95)" strokeWidth="1.2" />}
-        {DIA_FACETS.map(([a, b], i) => <line key={i} x1={a[0]} y1={a[1] + DIA_TOP} x2={b[0]} y2={b[1] + DIA_TOP} stroke="rgba(255,255,255,0.7)" strokeWidth="1.2" />)}
+        {/* Full Graphics: no frame line - just the clear glass with sharp edges and faint facets */}
+        {pixel && <polygon points={pstr} fill="none" stroke="#0a0a06" strokeWidth="4" shapeRendering="crispEdges" />}
+        {pixel && <polygon points={pstr} fill="none" stroke="rgb(var(--dt))" strokeWidth="2" transform={`translate(120 ${168 + DIA_TOP}) scale(.975) translate(-120 -${168 + DIA_TOP})`} shapeRendering="crispEdges" />}
+        {DIA_FACETS.map(([a, b], i) => <line key={i} x1={a[0]} y1={a[1] + DIA_TOP} x2={b[0]} y2={b[1] + DIA_TOP} stroke={pixel ? "rgba(255,255,255,0.7)" : "rgba(255,255,255,0.35)"} strokeWidth="1" />)}
       </svg>
       {!pixel && <div className="dx-dia-star" style={{ left: 180, top: -24 }} />}
       {sparks.map((p, i) => <div key={i} className="dx-dia-spark" style={{ left: p.x + "%", top: p.y + "%", animationDuration: p.dur + "s", animationDelay: p.d + "s" }} />)}
