@@ -2,7 +2,7 @@
   "name": "atomic-bunch-functions",
   "description": "Server-side Bullets/unlock security for Atomic Bunch",
   "engines": {
-    "node": "20"
+    "node": "22"
   },
   "main": "index.js",
   "scripts": {

@@ -84,7 +84,7 @@ function requireAuth(request) {
    Never trusts a number the client sends - the client only sends which
    match to settle.
    ========================================================================= */
-exports.claimMatchReward = onCall({ enforceAppCheck: true }, async (request) => {
+exports.claimMatchReward = onCall({ enforceAppCheck: true, invoker: "public" }, async (request) => {
   const uid = requireAuth(request);
   const gameId = request.data && request.data.gameId;
   if (!gameId || typeof gameId !== "string") {
@@ -184,7 +184,7 @@ exports.claimMatchReward = onCall({ enforceAppCheck: true }, async (request) => 
    run twice, so repeated calls can't be used to "re-roll" extra heroes or
    extra bonus cards for free.
    ========================================================================= */
-exports.claimFirstHero = onCall({ enforceAppCheck: true }, async (request) => {
+exports.claimFirstHero = onCall({ enforceAppCheck: true, invoker: "public" }, async (request) => {
   const uid = requireAuth(request);
   const hero = request.data && request.data.hero;
   if (!HEROES.includes(hero)) throw new HttpsError("invalid-argument", "Unknown hero.");
@@ -219,7 +219,7 @@ exports.claimFirstHero = onCall({ enforceAppCheck: true }, async (request) => {
    balance the client sends), so there's no window for a race or a replayed
    request to buy something twice or go negative.
    ========================================================================= */
-exports.buyHeroUnlock = onCall({ enforceAppCheck: true }, async (request) => {
+exports.buyHeroUnlock = onCall({ enforceAppCheck: true, invoker: "public" }, async (request) => {
   const uid = requireAuth(request);
   const hero = request.data && request.data.hero;
   if (!HEROES.includes(hero)) throw new HttpsError("invalid-argument", "Unknown hero.");
@@ -244,7 +244,7 @@ exports.buyHeroUnlock = onCall({ enforceAppCheck: true }, async (request) => {
   });
 });
 
-exports.buyCardUnlock = onCall({ enforceAppCheck: true }, async (request) => {
+exports.buyCardUnlock = onCall({ enforceAppCheck: true, invoker: "public" }, async (request) => {
   const uid = requireAuth(request);
   const cardId = request.data && request.data.cardId;
   const card = findCard(cardId);
@@ -269,7 +269,7 @@ exports.buyCardUnlock = onCall({ enforceAppCheck: true }, async (request) => {
   });
 });
 
-exports.buyUnlockAll = onCall({ enforceAppCheck: true }, async (request) => {
+exports.buyUnlockAll = onCall({ enforceAppCheck: true, invoker: "public" }, async (request) => {
   const uid = requireAuth(request);
   const userRef = db.collection("users").doc(uid);
   return db.runTransaction(async (tx) => {
@@ -291,30 +291,39 @@ exports.buyUnlockAll = onCall({ enforceAppCheck: true }, async (request) => {
    pity, sell values) live in gameLogic.js; these only run them inside a
    transaction against the player's real profile.
    ========================================================================= */
+const HTTPS_CODES = ["invalid-argument", "failed-precondition", "out-of-range", "unauthenticated", "permission-denied", "not-found", "already-exists", "resource-exhausted", "cancelled", "unavailable", "aborted", "deadline-exceeded"];
 function asHttpsError(e) {
   if (e instanceof HttpsError) return e;
-  return new HttpsError(e.code || "internal", e.message || "Something went wrong.");
+  const code = HTTPS_CODES.includes(e && e.code) ? e.code : "internal";
+  // "internal" errors normally reach the player as just "internal"; send the
+  // real reason along in `details` so the game can show it.
+  return new HttpsError(code, (e && e.message) || "Something went wrong.", { reason: String((e && e.message) || e) });
 }
 async function withProfile(request, fn) {
-  const uid = requireAuth(request);
-  const userRef = db.collection("users").doc(uid);
-  return db.runTransaction(async (tx) => {
-    const snap = await tx.get(userRef);
-    if (!snap.exists) throw new HttpsError("failed-precondition", "No profile yet.");
-    const profile = snap.data();
-    let out;
-    try { out = fn(profile); } catch (e) { throw asHttpsError(e); }
-    tx.set(userRef, out.updated, { merge: true });
-    return { ...out.extra, profile: { ...profile, ...out.updated } };
-  });
+  try {
+    const uid = requireAuth(request);
+    const userRef = db.collection("users").doc(uid);
+    return await db.runTransaction(async (tx) => {
+      const snap = await tx.get(userRef);
+      if (!snap.exists) throw new HttpsError("failed-precondition", "No profile yet.");
+      const profile = snap.data();
+      const out = fn(profile);
+      tx.set(userRef, out.updated, { merge: true });
+      // Plain JSON copy, so Firestore types (timestamps etc.) can't trip the reply.
+      return JSON.parse(JSON.stringify({ ...out.extra, profile: { ...profile, ...out.updated } }));
+    });
+  } catch (e) {
+    console.error("diamond/shop call failed", e);
+    throw asHttpsError(e);
+  }
 }
-exports.buyDiamondPacks = onCall({ enforceAppCheck: true }, (request) =>
+exports.buyDiamondPacks = onCall({ enforceAppCheck: true, invoker: "public" }, (request) =>
   withProfile(request, (p) => ({ updated: buyDiamondPacksLogic(p, Number(request.data && request.data.count)) })));
-exports.openDiamondPack = onCall({ enforceAppCheck: true }, (request) =>
+exports.openDiamondPack = onCall({ enforceAppCheck: true, invoker: "public" }, (request) =>
   withProfile(request, (p) => { const r = openDiamondPackLogic(p); return { updated: r.updated, extra: { cards: r.cards } }; }));
-exports.sellCard = onCall({ enforceAppCheck: true }, (request) =>
+exports.sellCard = onCall({ enforceAppCheck: true, invoker: "public" }, (request) =>
   withProfile(request, (p) => ({ updated: sellCardLogic(p, request.data && request.data.cardId, !!(request.data && request.data.diamond)) })));
-exports.sellDiamondDuplicates = onCall({ enforceAppCheck: true }, (request) =>
+exports.sellDiamondDuplicates = onCall({ enforceAppCheck: true, invoker: "public" }, (request) =>
   withProfile(request, (p) => { const r = sellDiamondDuplicatesLogic(p); return { updated: r.updated, extra: { sold: r.sold, gain: r.gain } }; }));
 
 /* =========================================================================
@@ -324,7 +333,7 @@ exports.sellDiamondDuplicates = onCall({ enforceAppCheck: true }, (request) =>
    the tutorial or calling this again never pays twice.
    ========================================================================= */
 const TUTORIAL_BULLET_REWARD = 600;
-exports.claimTutorialReward = onCall({ enforceAppCheck: true }, async (request) => {
+exports.claimTutorialReward = onCall({ enforceAppCheck: true, invoker: "public" }, async (request) => {
   const uid = requireAuth(request);
   const userRef = db.collection("users").doc(uid);
   return db.runTransaction(async (tx) => {
@@ -346,7 +355,7 @@ exports.claimTutorialReward = onCall({ enforceAppCheck: true }, async (request) 
    enforced here instead (and it still needs the SAME email added to
    ADMIN_EMAILS near the top of this file).
    ========================================================================= */
-exports.adminGrantBullets = onCall({ enforceAppCheck: true }, async (request) => {
+exports.adminGrantBullets = onCall({ enforceAppCheck: true, invoker: "public" }, async (request) => {
   requireAuth(request);
   const callerEmail = request.auth.token && request.auth.token.email;
   if (!callerEmail || !ADMIN_EMAILS.includes(callerEmail)) {
