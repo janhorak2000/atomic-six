@@ -1719,13 +1719,24 @@ const DELUXE_STYLE = `
   background-image: linear-gradient(128deg, rgba(255,255,255,0) 0%, rgba(255,255,255,0) 30%, rgba(var(--dt),0.25) 41%, rgba(255,255,255,0.75) 46%, #fff 47.2%, rgba(255,255,255,0.75) 48.4%, rgba(var(--dt),0.25) 53%, rgba(255,255,255,0) 64%); }
 @keyframes dxDiaFlare { 0%, 100% { background-position: 62% 62%; } 50% { background-position: 38% 38%; } }
 .dx-dia .dx-card-frame { background: transparent; box-shadow: none; }
-.dx-dia .dx-card-inner { background: linear-gradient(180deg, rgba(var(--dt),0.08), rgba(10,14,22,0.1)); box-shadow: inset 0 0 0 1px rgba(255,255,255,0.55); }
-.dx-dia .dx-card-art { box-shadow: 0 0 0 2px rgba(255,255,255,0.85), 0 0 12px rgba(var(--dt),0.9); }
-.dx-dia .dx-card-name { background: linear-gradient(90deg, rgba(var(--dt),0.18) 0%, rgba(8,12,20,0.86) 24%, rgba(8,12,20,0.9) 50%, rgba(8,12,20,0.86) 76%, rgba(var(--dt),0.18) 100%); border-color: rgba(255,255,255,0.8); }
-.dx-dia .dx-card-text { background: linear-gradient(180deg, rgba(255,255,255,0.9), rgba(var(--dt),0.45)); box-shadow: inset 0 0 0 1px rgba(255,255,255,0.9), 0 0 10px rgba(var(--dt),0.5); }
+/* clean crystal: no inner frame lines; the art ends where the name band starts and melts into it */
+.dx-dia .dx-card-inner { background: linear-gradient(180deg, rgba(var(--dt),0.08), rgba(10,14,22,0.1)); box-shadow: none; }
+.dx-dia .dx-card-art { height: 141px; border-radius: 7px 7px 0 0; box-shadow: 0 0 14px rgba(var(--dt),0.55);
+  -webkit-mask-image: linear-gradient(180deg, #000 80%, rgba(0,0,0,0.35) 100%); mask-image: linear-gradient(180deg, #000 80%, rgba(0,0,0,0.35) 100%); }
+.dx-dia .dx-card-art::after { box-shadow: inset 0 0 22px rgba(0,0,0,0.45); }
+.dx-dia .dx-card-name { background: linear-gradient(90deg, rgba(var(--dt),0.18) 0%, rgba(8,12,20,0.86) 24%, rgba(8,12,20,0.9) 50%, rgba(8,12,20,0.86) 76%, rgba(var(--dt),0.18) 100%); border-top: none; border-bottom: none; box-shadow: none; }
+.dx-dia .dx-card-text { background: linear-gradient(180deg, rgba(255,255,255,0.9), rgba(var(--dt),0.45)); box-shadow: 0 0 12px rgba(var(--dt),0.45); }
 .dx-dia .dx-card-foot { color: rgb(var(--dt)); text-shadow: 0 0 4px rgba(0,0,0,0.95), 0 0 2px rgba(0,0,0,0.9); }
 .dx-dia > .dx-card { filter: none; }
 .dx-dia .dx-dia-outline { filter: drop-shadow(0 0 7px rgba(var(--dt),0.85)); }
+.dx-dia-play { display: none; }
+.dx-playable .dx-dia-play { display: block; }
+.dx-dia.dx-playable .dx-card-frame { animation: none; }
+.dx-dia-play .glow { stroke: #7dff9a; filter: drop-shadow(0 0 6px rgba(80,255,130,0.9)) drop-shadow(0 0 14px rgba(80,255,130,0.6)); animation: dxDiaPlay 1.5s ease-in-out infinite; }
+@keyframes dxDiaPlay { 0%,100% { stroke: #7dff9a; opacity: 0.85; } 50% { stroke: #c9ffd6; opacity: 1; } }
+.dx-skin-pixel .dx-dia-play .glow { stroke: #39ff14; filter: none; animation: dxpDiaPlay 0.8s steps(1) infinite; }
+@keyframes dxpDiaPlay { 0%,100% { stroke: #39ff14; } 50% { stroke: #1c8f08; } }
+.dx-skin-pixel .dx-dia.dx-playable .dx-card-frame { animation: none; }
 .dx-lite .dx-dia .dx-dia-outline { filter: none; }
 .dx-dia .dx-card.dx-card-dim { filter: brightness(0.62) saturate(0.55) drop-shadow(0 0 6px rgba(var(--dt),0.4)); }
 .dx-dia .dx-badge-atk, .dx-dia .dx-badge-hp { z-index: 6; opacity: 1; }
@@ -1758,8 +1769,9 @@ const DELUXE_STYLE = `
 /* Pixel Art: no blur, dithered glass, a hard pixel streak */
 .dx-skin-pixel .dx-dia-glass { backdrop-filter: none; -webkit-backdrop-filter: none; background: repeating-conic-gradient(rgba(var(--dt),0.6) 0 25%, rgba(255,255,255,0.3) 0 50%) 0 0 / 6px 6px; }
 .dx-skin-pixel .dx-dia-flare { animation: none; mix-blend-mode: normal; background-size: auto; background-image: repeating-linear-gradient(135deg, rgba(255,255,255,0) 0 64px, rgba(255,255,255,0.55) 64px 72px, rgba(255,255,255,0) 72px 400px); }
-.dx-skin-pixel .dx-dia .dx-card-inner { box-shadow: inset 0 0 0 3px #0a0a06; }
-.dx-skin-pixel .dx-dia .dx-card-art { box-shadow: 0 0 0 3px #0a0a06, 0 0 0 5px rgba(255,255,255,0.9); }
+.dx-skin-pixel .dx-dia .dx-card-inner { box-shadow: none; }
+.dx-skin-pixel .dx-dia .dx-card-art { box-shadow: none; border-radius: 0; -webkit-mask-image: none; mask-image: none; }
+.dx-skin-pixel .dx-dia .dx-card-text { box-shadow: none; }
 .dx-skin-pixel .dx-dia > .dx-card { filter: none; }
 .dx-skin-pixel .dx-dia-spark { filter: none; background: linear-gradient(#fff,#fff) center/3px 100% no-repeat, linear-gradient(#fff,#fff) center/100% 3px no-repeat; animation-timing-function: steps(3); }
 .dx-skin-pixel .dx-dia-ap { border: 3px solid #0a0a06; box-shadow: 3px 3px 0 #0a0a06; background: #2fb85c; }
@@ -6957,6 +6969,11 @@ function DiamondShine({ card, pixel }) {
   return (
     <>
       <div className="dx-dia-over" style={{ clipPath: diaClip(pts), opacity: 0.35 }}><div className="dx-dia-flare" /></div>
+      {/* the "you can play this" glow, in the card's own crown shape (shown only while playable) */}
+      <svg className="dx-dia-over dx-dia-play" viewBox={`0 0 240 ${336 + DIA_TOP}`}>
+        {pixel && <polygon points={pstr} fill="none" stroke="#0a0a06" strokeWidth="12" transform={`translate(120 ${168 + DIA_TOP}) scale(1.035) translate(-120 -${168 + DIA_TOP})`} shapeRendering="crispEdges" />}
+        <polygon className="glow" points={pstr} fill="none" strokeWidth={pixel ? 6 : 5} strokeLinejoin={pixel ? "miter" : "round"} transform={`translate(120 ${168 + DIA_TOP}) scale(1.035) translate(-120 -${168 + DIA_TOP})`} shapeRendering={pixel ? "crispEdges" : undefined} />
+      </svg>
       <svg className="dx-dia-over dx-dia-outline" viewBox={`0 0 240 ${336 + DIA_TOP}`}>
         <polygon points={pstr} fill="none" stroke={pixel ? "#0a0a06" : "rgba(255,255,255,0.95)"} strokeWidth={pixel ? 4 : 2.5} shapeRendering={pixel ? "crispEdges" : undefined} />
         {pixel
