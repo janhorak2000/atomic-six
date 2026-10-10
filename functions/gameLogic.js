@@ -30,6 +30,7 @@ function findCard(id) {
 function isCardUnlocked(card, profile) {
   if (!profile) return false;
   if (profile.unlockedAll) return true;
+  if (profile.diamonds && profile.diamonds[card.id] > 0) return true; // a Diamond copy also unlocks the card
   if (card.hero) {
     return (profile.unlockedHeroes || []).includes(card.hero) || (profile.unlockedCardIds || []).includes(card.id);
   }
@@ -187,7 +188,136 @@ function weeklyProgressFor(profile) {
   return profile.weeklyProgress;
 }
 
+/* =========================================================================
+   DIAMOND PACKS (Standard set, Diamond skins) - 6 cards a pack:
+     4 x common slot  (common 85%, rare 12%, epic 3%)
+     1 x rare slot    (rare 80%, epic 20%)
+     1 x featured slot (rare 62.5%, epic 30%, unique 7.5%)
+   Pity: the 20th pack without a unique always has one. A unique is always one
+   the player doesn't own as Diamond yet, until they own them all.
+   Every card is a Diamond copy and also unlocks the normal card.
+   ========================================================================= */
+const DIAMOND_PACK_OFFERS = { 2: 4500, 10: 15000 };
+const PITY_PACKS = 20;
+// selling: a normal card for half its price, a Diamond copy for the full normal price
+function sellValue(card, diamond) {
+  const base = CARD_UNLOCK_COST[card.rarity] || 0;
+  return diamond ? base : Math.floor(base / 2);
+}
+function gameError(code, message) { const e = new Error(message); e.code = code; return e; }
+
+function buyDiamondPacksLogic(profile, count) {
+  const cost = DIAMOND_PACK_OFFERS[count];
+  if (!cost) throw gameError("invalid-argument", "Unknown pack offer.");
+  const bullets = profile.bullets || 0;
+  if (bullets < cost) throw gameError("failed-precondition", "Not enough Bullets.");
+  const packs = { ...(profile.packs || {}) };
+  packs.diamond = (packs.diamond || 0) + count;
+  return { bullets: bullets - cost, packs };
+}
+
+function rollRarity(rnd, table) {
+  let r = rnd();
+  for (const [rarity, p] of table) { if (r < p) return rarity; r -= p; }
+  return table[table.length - 1][0];
+}
+function openDiamondPackLogic(profile, rnd = Math.random) {
+  const packs = { ...(profile.packs || {}) };
+  if (!(packs.diamond > 0)) throw gameError("failed-precondition", "No packs to open.");
+  packs.diamond -= 1;
+  const diamonds = { ...(profile.diamonds || {}) };
+  let pity = profile.diamondPity || 0;
+  const slots = [
+    [["common", 0.85], ["rare", 0.12], ["epic", 0.03]],
+    [["common", 0.85], ["rare", 0.12], ["epic", 0.03]],
+    [["common", 0.85], ["rare", 0.12], ["epic", 0.03]],
+    [["common", 0.85], ["rare", 0.12], ["epic", 0.03]],
+    [["rare", 0.8], ["epic", 0.2]],
+    [["rare", 0.625], ["epic", 0.3], ["unique", 0.075]],
+  ];
+  const rarities = slots.map((t) => rollRarity(rnd, t));
+  if (pity >= PITY_PACKS - 1 && !rarities.includes("unique")) rarities[5] = "unique";
+  pity = rarities.includes("unique") ? 0 : pity + 1;
+  const pick = (arr) => arr[Math.floor(rnd() * arr.length)];
+  const cards = rarities.map((rarity) => {
+    let pool = CARD_DB.filter((c) => c.rarity === rarity);
+    if (rarity === "unique") {
+      const missing = pool.filter((c) => !(diamonds[c.id] > 0));
+      if (missing.length) pool = missing;
+    }
+    const card = pick(pool);
+    const isNew = !(diamonds[card.id] > 0);
+    diamonds[card.id] = (diamonds[card.id] || 0) + 1;
+    return { id: card.id, rarity, isNew };
+  });
+  return { updated: { packs, diamonds, diamondPity: pity }, cards };
+}
+
+// a normal card can be sold if it was unlocked on its own (not through a hero, Unlock All or the free neutrals)
+function canSellNormal(card, profile) {
+  if (!profile || profile.unlockedAll) return false;
+  if (!(profile.unlockedCardIds || []).includes(card.id)) return false;
+  if (card.hero && (profile.unlockedHeroes || []).includes(card.hero)) return false;
+  if (!card.hero && (card.rarity === "common" || card.rarity === "rare")) return false;
+  return true;
+}
+function sellCardLogic(profile, cardId, diamond) {
+  const card = findCard(cardId);
+  if (!card) throw gameError("invalid-argument", "Unknown card.");
+  const bullets = profile.bullets || 0;
+  if (diamond) {
+    const diamonds = { ...(profile.diamonds || {}) };
+    if (!(diamonds[cardId] > 0)) throw gameError("failed-precondition", "You don't own that card.");
+    diamonds[cardId] -= 1;
+    if (diamonds[cardId] <= 0) delete diamonds[cardId];
+    return { diamonds, bullets: bullets + sellValue(card, true) };
+  }
+  if (!canSellNormal(card, profile)) throw gameError("failed-precondition", "This card can't be sold.");
+  return { unlockedCardIds: (profile.unlockedCardIds || []).filter((id) => id !== cardId), bullets: bullets + sellValue(card, false) };
+}
+// sells every Diamond copy beyond the first of each card
+function sellDiamondDuplicatesLogic(profile) {
+  const diamonds = { ...(profile.diamonds || {}) };
+  let gain = 0, sold = 0;
+  Object.keys(diamonds).forEach((id) => {
+    const card = findCard(id);
+    if (!card || diamonds[id] <= 1) return;
+    const n = diamonds[id] - 1;
+    gain += n * sellValue(card, true);
+    sold += n;
+    diamonds[id] = 1;
+  });
+  return { updated: { diamonds, bullets: (profile.bullets || 0) + gain }, sold, gain };
+}
+
+/* ---------- weekly win reward: 100 Bullets for every 10 PvP wins, max 200 a week ---------- */
+const WIN_REWARD_EVERY = 10, WIN_REWARD_BULLETS = 100, WIN_REWARD_WEEKLY_CAP = 200;
+function winRewardFor(profile) {
+  const wk = questWeekId();
+  const wr = (profile && profile.winReward) || {};
+  return { progress: wr.progress || 0, lifetime: wr.lifetime || 0, weekId: wk, weekBullets: wr.weekId === wk ? (wr.weekBullets || 0) : 0 };
+}
+function applyWinReward(profile, won) {
+  const wr = winRewardFor(profile);
+  let paid = 0;
+  if (won) {
+    wr.progress += 1;
+    if (wr.progress >= WIN_REWARD_EVERY) {
+      wr.progress = 0;
+      if (wr.weekBullets < WIN_REWARD_WEEKLY_CAP) {
+        paid = Math.min(WIN_REWARD_BULLETS, WIN_REWARD_WEEKLY_CAP - wr.weekBullets);
+        wr.weekBullets += paid;
+        wr.lifetime += paid;
+      }
+    }
+  }
+  return { winReward: wr, paid };
+}
+
 module.exports = {
+  DIAMOND_PACK_OFFERS, PITY_PACKS, sellValue, canSellNormal,
+  buyDiamondPacksLogic, openDiamondPackLogic, sellCardLogic, sellDiamondDuplicatesLogic,
+  WIN_REWARD_EVERY, WIN_REWARD_BULLETS, WIN_REWARD_WEEKLY_CAP, winRewardFor, applyWinReward,
   CARD_DB, HEROES, TIERS,
   HERO_UNLOCK_COST, UNLOCK_ALL_COST, CARD_UNLOCK_COST,
   findCard, isCardUnlocked, isHeroUnlocked, randomNeutralBonusCardIds,

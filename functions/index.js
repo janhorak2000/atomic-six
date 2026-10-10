@@ -47,6 +47,7 @@ const {
   findCard, isCardUnlocked, isHeroUnlocked, randomNeutralBonusCardIds,
   applyMatchResult,
   QUEST_BULLET_REWARD, selectWeeklyQuests, questProgress, weeklyProgressFor,
+  buyDiamondPacksLogic, openDiamondPackLogic, sellCardLogic, sellDiamondDuplicatesLogic, applyWinReward,
 } = require("./gameLogic.js");
 
 // A generous ceiling for an indie-scale game - raise it later if you
@@ -155,10 +156,15 @@ exports.claimMatchReward = onCall({ enforceAppCheck: true }, async (request) => 
     });
     wp.claimedQuestIds = Array.from(claimed);
 
+    // 100 Bullets for every 10 wins against real players, max 200 a week
+    const wr = applyWinReward(existing, won);
+    bullets += wr.paid;
+
     profile = {
       ...existing,
       ...profile,
       weeklyProgress: wp,
+      winReward: wr.winReward,
       bullets,
       displayName: existing.displayName || me.displayName || "Player",
       email: existing.email || null,
@@ -279,6 +285,37 @@ exports.buyUnlockAll = onCall({ enforceAppCheck: true }, async (request) => {
     return { ...profile, ...updated };
   });
 });
+
+/* =========================================================================
+   Diamond packs, opening them, and selling cards. The rules (prices, odds,
+   pity, sell values) live in gameLogic.js; these only run them inside a
+   transaction against the player's real profile.
+   ========================================================================= */
+function asHttpsError(e) {
+  if (e instanceof HttpsError) return e;
+  return new HttpsError(e.code || "internal", e.message || "Something went wrong.");
+}
+async function withProfile(request, fn) {
+  const uid = requireAuth(request);
+  const userRef = db.collection("users").doc(uid);
+  return db.runTransaction(async (tx) => {
+    const snap = await tx.get(userRef);
+    if (!snap.exists) throw new HttpsError("failed-precondition", "No profile yet.");
+    const profile = snap.data();
+    let out;
+    try { out = fn(profile); } catch (e) { throw asHttpsError(e); }
+    tx.set(userRef, out.updated, { merge: true });
+    return { ...out.extra, profile: { ...profile, ...out.updated } };
+  });
+}
+exports.buyDiamondPacks = onCall({ enforceAppCheck: true }, (request) =>
+  withProfile(request, (p) => ({ updated: buyDiamondPacksLogic(p, Number(request.data && request.data.count)) })));
+exports.openDiamondPack = onCall({ enforceAppCheck: true }, (request) =>
+  withProfile(request, (p) => { const r = openDiamondPackLogic(p); return { updated: r.updated, extra: { cards: r.cards } }; }));
+exports.sellCard = onCall({ enforceAppCheck: true }, (request) =>
+  withProfile(request, (p) => ({ updated: sellCardLogic(p, request.data && request.data.cardId, !!(request.data && request.data.diamond)) })));
+exports.sellDiamondDuplicates = onCall({ enforceAppCheck: true }, (request) =>
+  withProfile(request, (p) => { const r = sellDiamondDuplicatesLogic(p); return { updated: r.updated, extra: { sold: r.sold, gain: r.gain } }; }));
 
 /* =========================================================================
    claimTutorialReward — 600 Bullets for finishing the tutorial. Paid once
