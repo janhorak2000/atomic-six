@@ -281,6 +281,27 @@ exports.buyUnlockAll = onCall({ enforceAppCheck: true }, async (request) => {
 });
 
 /* =========================================================================
+   claimTutorialReward — 600 Bullets for finishing the tutorial. Paid once
+   per account: the `tutorialRewardClaimed` flag is written here (Admin SDK)
+   and players can't write it themselves (see firestore.rules), so replaying
+   the tutorial or calling this again never pays twice.
+   ========================================================================= */
+const TUTORIAL_BULLET_REWARD = 600;
+exports.claimTutorialReward = onCall({ enforceAppCheck: true }, async (request) => {
+  const uid = requireAuth(request);
+  const userRef = db.collection("users").doc(uid);
+  return db.runTransaction(async (tx) => {
+    const snap = await tx.get(userRef);
+    if (!snap.exists) throw new HttpsError("failed-precondition", "No profile yet.");
+    const profile = snap.data();
+    if (profile.tutorialRewardClaimed) return { ...profile, alreadyClaimed: true };
+    const updated = { tutorialRewardClaimed: true, bullets: (profile.bullets || 0) + TUTORIAL_BULLET_REWARD };
+    tx.set(userRef, updated, { merge: true });
+    return { ...profile, ...updated, alreadyClaimed: false };
+  });
+});
+
+/* =========================================================================
    adminGrantBullets — replaces the client-side admin panel's direct write.
    The gate is request.auth.token.email, which comes from the verified
    Firebase Auth token Google issued, not anything the client claims about
