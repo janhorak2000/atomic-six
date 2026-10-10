@@ -30,6 +30,13 @@ service cloud.firestore {
       allow delete: if false;
     }
 
+    // Private: each player's sign-in email. Only the Cloud Functions (Admin
+    // SDK) read or write this - the browser can't, so emails never leak via
+    // the public leaderboard profiles above.
+    match /userEmails/{userId} {
+      allow read, write: if false;
+    }
+
     match /users/{userId}/decks/{hero} {
       allow read, write: if request.auth != null && request.auth.uid == userId;
     }
