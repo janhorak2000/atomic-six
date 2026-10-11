@@ -29,6 +29,7 @@ function findCard(id) {
 
 function isCardUnlocked(card, profile) {
   if (!profile) return false;
+  if (card.reward) return (profile.rewardCardIds || []).includes(card.id); // earned by winning games only
   if (profile.unlockedAll) return true;
   if (profile.diamonds && profile.diamonds[card.id] > 0) return true; // a Diamond copy also unlocks the card
   if (card.hero) {
@@ -54,8 +55,8 @@ function pickRandomN(arr, n) {
 }
 
 function randomNeutralBonusCardIds() {
-  const epics = CARD_DB.filter((c) => !c.hero && c.rarity === "epic");
-  const uniques = CARD_DB.filter((c) => !c.hero && c.rarity === "unique");
+  const epics = CARD_DB.filter((c) => !c.hero && c.rarity === "epic" && !c.reward);
+  const uniques = CARD_DB.filter((c) => !c.hero && c.rarity === "unique" && !c.reward);
   const ids = [];
   if (epics.length) ids.push(pickRandomN(epics, 1)[0].id);
   if (uniques.length) ids.push(pickRandomN(uniques, 1)[0].id);
@@ -240,7 +241,8 @@ function openDiamondPackLogic(profile, rnd = Math.random) {
   pity = rarities.includes("unique") ? 0 : pity + 1;
   const pick = (arr) => arr[Math.floor(rnd() * arr.length)];
   const cards = rarities.map((rarity) => {
-    let pool = CARD_DB.filter((c) => c.rarity === rarity);
+    // win-reward cards only drop once they are unlocked
+    let pool = CARD_DB.filter((c) => c.rarity === rarity && (!c.reward || (profile.rewardCardIds || []).includes(c.id)));
     if (rarity === "unique") {
       const missing = pool.filter((c) => !(diamonds[c.id] > 0));
       if (missing.length) pool = missing;
@@ -291,6 +293,21 @@ function sellDiamondExtras(diamonds) {
   });
   return { gain, sold };
 }
+// Buy one Diamond copy straight away: twice the normal unlock price, up to the copies you can use
+function diamondCardCost(card) { return (CARD_UNLOCK_COST[card.rarity] || 0) * 2; }
+function buyDiamondCardLogic(profile, cardId) {
+  const card = findCard(cardId);
+  if (!card) throw gameError("invalid-argument", "Unknown card.");
+  if (card.reward && !isCardUnlocked(card, profile)) throw gameError("failed-precondition", "Win games to unlock this card first.");
+  const diamonds = { ...(profile.diamonds || {}) };
+  const have = diamonds[card.id] || 0;
+  if (have >= diamondKeepMax(card)) throw gameError("failed-precondition", "You already have the most Diamond copies you can use.");
+  const cost = diamondCardCost(card);
+  const bullets = profile.bullets || 0;
+  if (bullets < cost) throw gameError("failed-precondition", "Not enough Bullets.");
+  diamonds[card.id] = have + 1;
+  return { diamonds, bullets: bullets - cost };
+}
 function sellDiamondDuplicatesLogic(profile) {
   const diamonds = { ...(profile.diamonds || {}) };
   const { gain, sold } = sellDiamondExtras(diamonds);
@@ -321,9 +338,24 @@ function applyWinReward(profile, won) {
   return { winReward: wr, paid };
 }
 
+/* ---------- starter win track: the first 5 wins (CPU wins count too) ---------- */
+// win 1: VHS Tape Recording, win 2: Egg Shaped Package, win 3: Big Birthday Cake,
+// win 4: the six hero items, win 5: 2 Diamond Packs
+const STARTER_WIN_STEPS = 5;
+function applyStarterWin(profile) {
+  const step = (profile.starterWins || 0) + 1;
+  if (step > STARTER_WIN_STEPS) return null;
+  const updated = { starterWins: step };
+  const ids = CARD_DB.filter((c) => c.reward === step).map((c) => c.id);
+  if (ids.length) updated.rewardCardIds = [...new Set([...(profile.rewardCardIds || []), ...ids])];
+  if (step === 5) { const packs = { ...(profile.packs || {}) }; packs.diamond = (packs.diamond || 0) + 2; updated.packs = packs; }
+  return updated;
+}
+
 module.exports = {
+  STARTER_WIN_STEPS, applyStarterWin,
   DIAMOND_PACK_OFFERS, PITY_PACKS, sellValue, canSellNormal,
-  buyDiamondPacksLogic, openDiamondPackLogic, sellCardLogic, sellDiamondDuplicatesLogic,
+  buyDiamondPacksLogic, openDiamondPackLogic, sellCardLogic, sellDiamondDuplicatesLogic, buyDiamondCardLogic, diamondCardCost,
   WIN_REWARD_EVERY, WIN_REWARD_BULLETS, WIN_REWARD_WEEKLY_CAP, winRewardFor, applyWinReward,
   CARD_DB, HEROES, TIERS,
   HERO_UNLOCK_COST, UNLOCK_ALL_COST, CARD_UNLOCK_COST,

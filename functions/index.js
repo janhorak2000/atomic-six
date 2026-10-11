@@ -47,7 +47,8 @@ const {
   findCard, isCardUnlocked, isHeroUnlocked, randomNeutralBonusCardIds,
   applyMatchResult,
   QUEST_BULLET_REWARD, selectWeeklyQuests, questProgress, weeklyProgressFor,
-  buyDiamondPacksLogic, openDiamondPackLogic, sellCardLogic, sellDiamondDuplicatesLogic, applyWinReward,
+  buyDiamondPacksLogic, openDiamondPackLogic, sellCardLogic, sellDiamondDuplicatesLogic, applyWinReward, buyDiamondCardLogic,
+  applyStarterWin,
 } = require("./gameLogic.js");
 
 // A generous ceiling for an indie-scale game - raise it later if you
@@ -169,9 +170,13 @@ exports.claimMatchReward = onCall({ enforceAppCheck: true, invoker: "public" }, 
     const wr = applyWinReward(existing, won);
     bullets += wr.paid;
 
+    // the first 5 wins also unlock the win-reward cards (see applyStarterWin)
+    const starter = won ? applyStarterWin(existing) : null;
+
     profile = {
       ...existing,
       ...profile,
+      ...(starter || {}),
       weeklyProgress: wp,
       winReward: wr.winReward,
       bullets,
@@ -266,6 +271,7 @@ exports.buyCardUnlock = onCall({ enforceAppCheck: true, invoker: "public" }, asy
     if (!snap.exists) throw new HttpsError("failed-precondition", "No profile yet.");
     const profile = snap.data();
     if (isCardUnlocked(card, profile)) throw new HttpsError("already-exists", "Already unlocked.");
+    if (card.reward) throw new HttpsError("failed-precondition", "Win games to unlock this card for free.");
     const cost = CARD_UNLOCK_COST[card.rarity] || 0;
     const bullets = profile.bullets || 0;
     if (bullets < cost) throw new HttpsError("failed-precondition", "Not enough Bullets.");
@@ -330,12 +336,32 @@ async function withProfile(request, fn) {
 }
 exports.buyDiamondPacks = onCall({ enforceAppCheck: true, invoker: "public" }, (request) =>
   withProfile(request, (p) => ({ updated: buyDiamondPacksLogic(p, Number(request.data && request.data.count)) })));
+exports.buyDiamondCard = onCall({ enforceAppCheck: true, invoker: "public" }, (request) =>
+  withProfile(request, (p) => ({ updated: buyDiamondCardLogic(p, request.data && request.data.cardId) })));
 exports.openDiamondPack = onCall({ enforceAppCheck: true, invoker: "public" }, (request) =>
   withProfile(request, (p) => { const r = openDiamondPackLogic(p); return { updated: r.updated, extra: { cards: r.cards } }; }));
 exports.sellCard = onCall({ enforceAppCheck: true, invoker: "public" }, (request) =>
   withProfile(request, (p) => ({ updated: sellCardLogic(p, request.data && request.data.cardId, !!(request.data && request.data.diamond)) })));
 exports.sellDiamondDuplicates = onCall({ enforceAppCheck: true, invoker: "public" }, (request) =>
   withProfile(request, (p) => { const r = sellDiamondDuplicatesLogic(p); return { updated: r.updated, extra: { sold: r.sold, gain: r.gain } }; }));
+
+/* =========================================================================
+   claimCpuWin — a win against the CPU counts toward the first 5 win
+   rewards (CPU matches run only in the browser, so there's no match
+   document to check). Only the 5 starter steps can ever be paid this way,
+   and claims must be at least CPU_WIN_GAP_MS apart, so tinkering can't do
+   more than speed up those 5 steps a little.
+   ========================================================================= */
+const CPU_WIN_GAP_MS = 90 * 1000;
+exports.claimCpuWin = onCall({ enforceAppCheck: true, invoker: "public" }, (request) =>
+  withProfile(request, (p) => {
+    const now = Date.now();
+    if ((p.starterWins || 0) >= 5) return { updated: {}, extra: { step: 0 } };
+    if (p.lastCpuWinAt && now - p.lastCpuWinAt < CPU_WIN_GAP_MS) return { updated: {}, extra: { step: 0 } };
+    const starter = applyStarterWin(p);
+    if (!starter) return { updated: {}, extra: { step: 0 } };
+    return { updated: { ...starter, lastCpuWinAt: now }, extra: { step: starter.starterWins } };
+  }));
 
 /* =========================================================================
    claimTutorialReward — 600 Bullets for finishing the tutorial. Paid once
