@@ -2486,6 +2486,8 @@ const dxTilt = {
 /* ---------- the card face (base size 240 x 336, drawn at any scale) ---------- */
 const DX_CARD_W = 240, DX_CARD_H = 336;
 function DeluxeCard({ card, scale = 1, dim, playable, tilt, selected, costText, diamond }) {
+  // items always show "equip + use" (1+X), also outside a match (collection, deck builder, packs...)
+  if (costText == null && card.type === "spell" && card.cost != null) costText = `1+${Math.max(0, card.cost - 1)}`;
   const pixel = useDisplay().mode === "pixel";
   const r = DX_RARITY[card.rarity] || DX_RARITY.common;
   const fac = dxFaction(card.hero);
@@ -8290,6 +8292,53 @@ function InfoButton({ title, children, style }) {
     </>
   );
 }
+
+/* Notepad styles: a small hamburger menu in the top-right corner */
+function NpMenu({ go, packs }) {
+  const [open, setOpen] = useState(false);
+  const [rules, setRules] = useState(false);
+  const ref = useRef(null);
+  useEffect(() => {
+    if (!open) return undefined;
+    const away = (e) => { if (ref.current && !ref.current.contains(e.target)) setOpen(false); };
+    document.addEventListener("pointerdown", away, true);
+    return () => document.removeEventListener("pointerdown", away, true);
+  }, [open]);
+  const pick = (fn) => { setOpen(false); fn(); };
+  const items = [
+    ["leaderboard", tr("Leaderboard"), () => go("leaderboard")],
+    ["quests", tr("Quests"), () => go("quests")],
+    ["collection", tr("Collection"), () => go("collection")],
+    ["packs", tr("Packs"), () => go("packs")],
+    ["rules", tr("Rules"), () => setRules(true)],
+    ["tutorial", tr("Tutorial"), () => TUT.app.start && TUT.app.start(0)],
+    ["settings", tr("Settings"), () => go("settings")],
+  ];
+  const row = { display: "flex", alignItems: "center", justifyContent: "space-between", gap: 8, width: "100%", padding: "8px 12px", fontFamily: FONT, fontSize: 12.5, fontWeight: 700, textAlign: "left", cursor: "pointer", border: "none", borderTop: "1px solid #ddd", background: "#fff", color: "#111" };
+  return (
+    <div ref={ref} style={{ position: "relative", display: "inline-block", marginTop: 4 }}>
+      <button type="button" aria-label={tr("Open menu")} aria-expanded={open} onClick={() => setOpen((o) => !o)}
+        style={{ position: "relative", display: "inline-flex", alignItems: "center", gap: 6, padding: "3px 9px", fontFamily: FONT, fontSize: 11, fontWeight: 700, border: "2px solid #000", background: open ? "#000" : "#fff", color: open ? "#fff" : "#000", borderRadius: 4, cursor: "pointer" }}>
+        <span aria-hidden="true" style={{ display: "inline-flex", flexDirection: "column", gap: 2 }}>{[0, 1, 2].map((i) => <i key={i} style={{ display: "block", width: 13, height: 2, background: "currentColor" }} />)}</span>
+        {tr("Menu")}
+        {packs > 0 && <PacksBubble n={packs} />}
+      </button>
+      {open && (
+        <div role="menu" style={{ position: "absolute", right: 0, top: "calc(100% + 6px)", zIndex: 300, width: 190, border: "2px solid #000", borderRadius: 6, background: "#fff", boxShadow: "4px 4px 0 rgba(0,0,0,0.2)", overflow: "hidden" }}>
+          <button type="button" role="menuitem" onClick={() => pick(() => go("shop"))}
+            style={{ ...row, borderTop: "none", background: "#1e78e0", color: "#fff", borderBottom: "2px solid #0a4fa0" }}>{tr("Shop")}</button>
+          {items.map(([id, label, fn]) => (
+            <button key={id} type="button" role="menuitem" onClick={() => pick(fn)} style={row}>
+              <span>{label}</span>
+              {id === "packs" && <PacksBubble n={packs} inline />}
+            </button>
+          ))}
+        </div>
+      )}
+      {rules && <RulesModal onClose={() => setRules(false)} />}
+    </div>
+  );
+}
 /* Game logo (art/logo, made by tools/mklogo.py from the logo artwork):
    colour = sign-in screen, white = Full Graphics header, pixel = Pixel Art, black = notepad styles. */
 const LOGO_SRC = {
@@ -8352,6 +8401,7 @@ const I18N = {
 };
 function MiniCard({ cardId, onClick, disabled, small, allowDetail, costText, diamond }) {
   const c = findCard(cardId);
+  if (costText == null && c && c.type === "spell" && c.cost != null) costText = `1+${Math.max(0, c.cost - 1)}`;
   const r = RARITY_STYLE[c.rarity];
   const badgeReserve = small ? 20 : 22;
   const [showDetail, setShowDetail] = useState(false);
@@ -9199,15 +9249,6 @@ function HeroSelectScreen({ onPick, onBuildDeck, onPlayCpu, onShowLeaderboard, o
               : tr("{n} wins left to promote", { n: Math.max(0, 5 - (myProfile.winStreak || 0)) })}
           </div>
         )}
-        <div style={{ display: "flex", gap: 10, justifyContent: "center", marginTop: 4 }}>
-          <button onClick={onShowLeaderboard} style={{ fontFamily: FONT, fontSize: 11, border: "none", background: "none", color: "#555", textDecoration: "underline", cursor: "pointer" }}>{tr("Leaderboard")}</button>
-          <button onClick={onShowQuests} style={{ fontFamily: FONT, fontSize: 11, border: "none", background: "none", color: "#555", textDecoration: "underline", cursor: "pointer" }}>{tr("Quests")}</button>
-          <button onClick={() => SHOP.app.go && SHOP.app.go("collection")} style={{ fontFamily: FONT, fontSize: 11, border: "none", background: "none", color: "#555", textDecoration: "underline", cursor: "pointer" }}>{tr("Collection")}</button>
-          <span style={{ position: "relative", display: "inline-block" }}><button onClick={() => SHOP.app.go && SHOP.app.go("packs")} style={{ fontFamily: FONT, fontSize: 11, border: "none", background: "none", color: "#555", textDecoration: "underline", cursor: "pointer" }}>{tr("Packs")}</button><PacksBubble n={SHOP.app.packsLeft} /></span>
-          <button onClick={() => setShowRules(true)} style={{ fontFamily: FONT, fontSize: 11, border: "none", background: "none", color: "#555", textDecoration: "underline", cursor: "pointer" }}>{tr("Check Rules")}</button>
-          <button onClick={() => TUT.app.start && TUT.app.start(0)} style={{ fontFamily: FONT, fontSize: 11, border: "none", background: "none", color: "#555", textDecoration: "underline", cursor: "pointer" }}>{tr("Tutorial")}</button>
-          <button onClick={onShowSettings} style={{ fontFamily: FONT, fontSize: 11, border: "none", background: "none", color: "#555", textDecoration: "underline", cursor: "pointer" }}>{tr("Settings")}</button>
-        </div>
         <p style={{ fontSize: 13, color: "#333", marginTop: 8 }}>{tr("Pick a survivor and choose game mode.")}</p>
       </div>
       {showRules && <RulesModal onClose={() => setShowRules(false)} />}
@@ -10815,13 +10856,7 @@ export default function App() {
             }}>
               {profileLoading ? "…" : tr("{n} Bullets", { n: myProfile?.bullets || 0 })}
             </div>
-            <div>
-              <button
-                onClick={() => setScreen("shop")}
-                style={{ marginTop: 3, padding: "2px 10px", fontFamily: FONT, fontWeight: 700, fontSize: 10, border: "2px solid #0a4fa0", background: "#1e78e0", color: "#fff", cursor: "pointer", borderRadius: 4 }}
-              >
-                {tr("Shop")}</button>
-            </div>
+            <div><NpMenu go={setScreen} packs={(myProfile && myProfile.packs && myProfile.packs.diamond) || 0} /></div>
             {onlineCount !== null && <div style={{ fontSize: 10, color: "#888", marginTop: 2 }}>{tr("Players Online:")}{" "}{onlineCount}</div>}
           </div>
         </div>
