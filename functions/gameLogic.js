@@ -308,10 +308,29 @@ function buyDiamondCardLogic(profile, cardId) {
   diamonds[card.id] = have + 1;
   return { diamonds, bullets: bullets - cost };
 }
+// "Sell Duplicates": every copy above 2 of a card (above 1 of a Unique), for Diamond copies and for
+// normal copies alike. Normal copies are counted in profile.cardCopies (cardId -> copies), ready for
+// future sets where normal cards can drop more than once; a normal copy sells for half its unlock price.
+function sellNormalExtras(copies) {
+  let gain = 0, sold = 0;
+  Object.keys(copies).forEach((id) => {
+    const card = findCard(id);
+    const keep = diamondKeepMax(card);
+    if (!card || !(copies[id] > keep)) return;
+    const n = copies[id] - keep;
+    gain += n * sellValue(card, false);
+    sold += n;
+    copies[id] = keep;
+  });
+  return { gain, sold };
+}
 function sellDiamondDuplicatesLogic(profile) {
   const diamonds = { ...(profile.diamonds || {}) };
-  const { gain, sold } = sellDiamondExtras(diamonds);
-  return { updated: { diamonds, bullets: (profile.bullets || 0) + gain }, sold, gain };
+  const copies = { ...(profile.cardCopies || {}) };
+  const d = sellDiamondExtras(diamonds), n = sellNormalExtras(copies);
+  const updated = { diamonds, bullets: (profile.bullets || 0) + d.gain + n.gain };
+  if (profile.cardCopies) updated.cardCopies = copies;
+  return { updated, sold: d.sold + n.sold, gain: d.gain + n.gain };
 }
 
 /* ---------- weekly win reward: 100 Bullets for every 10 PvP wins, max 200 a week ---------- */
