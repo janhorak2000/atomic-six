@@ -1793,7 +1793,9 @@ const DELUXE_STYLE = `
 /* ---- Diamond card skins: Crystal Crown (see Dia* in j_shop) ---- */
 .dx-dia .dx-card { transform-style: flat; }
 .dx-dia-glass { position: absolute; left: 0; top: -60px; width: 240px; height: 396px; pointer-events: none; overflow: hidden;
-  background: radial-gradient(ellipse at 28% 18%, rgba(255,255,255,0.28), rgba(255,255,255,0) 42%), radial-gradient(ellipse at 75% 85%, rgba(var(--dt),0.22), rgba(0,0,0,0) 50%),
+  /* the clear glass as before, with a light colour ramp only up in the crown */
+  background: linear-gradient(180deg, rgba(var(--dt), calc(0.42 * var(--ga, 0.35))) 0px, rgba(var(--dt2, var(--dt)), calc(0.3 * var(--ga, 0.35))) 38px, rgba(var(--dt), calc(0.1 * var(--ga, 0.35))) 62px, rgba(0,0,0,0) 80px),
+    radial-gradient(ellipse at 28% 18%, rgba(255,255,255,0.28), rgba(255,255,255,0) 42%), radial-gradient(ellipse at 75% 85%, rgba(var(--dt),0.22), rgba(0,0,0,0) 50%),
     linear-gradient(135deg, rgba(255,255,255,0.16), rgba(var(--dt),0.1) 35%, rgba(255,255,255,0.03) 55%, rgba(var(--dt),0.14) 80%, rgba(255,255,255,0.12));
   /* like looking through a polished stone: what is behind is softened, brighter and more colourful */
   }
@@ -1821,7 +1823,13 @@ const DELUXE_STYLE = `
 .dx-dia .dx-card-art { height: 141px; border-radius: 7px 7px 0 0; box-shadow: 0 0 14px rgba(var(--dt),0.55);
   -webkit-mask-image: linear-gradient(180deg, #000 80%, rgba(0,0,0,0.35) 100%); mask-image: linear-gradient(180deg, #000 80%, rgba(0,0,0,0.35) 100%); }
 .dx-dia .dx-card-art::after { box-shadow: inset 0 0 22px rgba(0,0,0,0.45); }
-.dx-dia .dx-card-name { background: linear-gradient(90deg, rgba(var(--dt),0.18) 0%, rgba(8,12,20,0.86) 24%, rgba(8,12,20,0.9) 50%, rgba(8,12,20,0.86) 76%, rgba(var(--dt),0.18) 100%); border-top: none; border-bottom: none; box-shadow: none; }
+/* Diamond name plate: a soft dark cloud behind the name that fades out towards the edges and corners */
+.dx-dia .dx-card-name { background: none; border-top: none; border-bottom: none; box-shadow: none; isolation: isolate; }
+.dx-dia .dx-card-name::before { content: ""; position: absolute; left: 4px; right: 4px; top: -7px; bottom: -7px; z-index: -1; pointer-events: none;
+  /* fully faded out before it reaches the card's sides, so nothing gets cut off */
+  background: radial-gradient(ellipse 50% 50% at 50% 50%, rgba(6,9,16,0.94) 0%, rgba(6,9,16,0.88) 50%, rgba(6,9,16,0.45) 78%, rgba(6,9,16,0) 100%); }
+.dx-dia .dx-card-name::after { content: ""; position: absolute; left: 18%; right: 18%; bottom: -2px; height: 1px; pointer-events: none;
+  background: linear-gradient(90deg, rgba(var(--dt),0), rgba(var(--dt),0.75), rgba(var(--dt),0)); }
 .dx-dia .dx-card-text { background: linear-gradient(180deg, rgba(255,255,255,0.9), rgba(var(--dt),0.45)); box-shadow: 0 0 12px rgba(var(--dt),0.45); }
 .dx-dia .dx-card-foot { color: rgb(var(--dt)); text-shadow: 0 0 4px rgba(0,0,0,0.95), 0 0 2px rgba(0,0,0,0.9); }
 .dx-dia > .dx-card { filter: none; }
@@ -7503,11 +7511,12 @@ function TutorialOffer() {
    The rules (prices, odds, pity, sell values) are enforced on the server
    (functions/gameLogic.js). These numbers are only for showing them.
    ========================================================================= */
+// c / rgb: the bright tint; deep: the dark end of the colour ramp in the crystal; ga: how strongly the glass is coloured
 const DIA_TINT = {
-  common: { c: "#eef6ff", rgb: "226,240,255" },
-  rare: { c: "#6fb8ff", rgb: "100,180,255" },
-  epic: { c: "#c27dff", rgb: "190,120,255" },
-  unique: { c: "#ffcf4a", rgb: "255,205,70" },
+  common: { c: "#eef6ff", rgb: "226,240,255", deep: "150,175,205", ga: 0.35 },
+  rare: { c: "#6fb8ff", rgb: "100,180,255", deep: "20,70,200", ga: 1 },
+  epic: { c: "#c27dff", rgb: "190,120,255", deep: "95,25,190", ga: 1 },
+  unique: { c: "#ffcf4a", rgb: "255,205,70", deep: "205,115,10", ga: 1 },
 };
 const DIAMOND_OFFERS = [{ count: 2, bullets: 4500, price: 5.99 }, { count: 10, bullets: 15000, price: 19.99 }];
 const DIA_PITY = 20;
@@ -7518,7 +7527,7 @@ function diaStyle(rarity) {
   const t = DIA_TINT[rarity] || DIA_TINT.common, rgb = t.rgb;
   return {
     vars: {
-      "--dt": rgb,
+      "--dt": rgb, "--dt2": t.deep, "--ga": t.ga,
       "--rf": `linear-gradient(135deg, rgba(255,255,255,0.97) 0%, rgba(${rgb},0.92) 20%, rgba(255,255,255,0.7) 38%, rgba(${rgb},1) 55%, rgba(255,255,255,0.9) 74%, rgba(${rgb},0.85) 100%)`,
       "--rs": t.c, "--re": t.c,
     },
