@@ -8033,7 +8033,7 @@ function CardManageModal({ card, profile, onClose, startDia }) {
   const sk = useSkinS();
   const dia = myDiamondCount(profile, card.id);
   const [showDia, setShowDia] = useState(!!startDia); // opens on the version you were looking at
-  const diaCost = (CARD_UNLOCK_COST[card.rarity] || 0) * 2;
+  const diaCost = (CARD_UNLOCK_COST[card.rarity] || 0) * 4; // must match diamondCardCost in functions/gameLogic.js
   const canBuyDia = dia < diaKeepMax(card);
   const [confirm, setConfirm] = useState(null); // "normal" | "diamond"
   const [busy, setBusy] = useState(false);
