@@ -293,8 +293,8 @@ function sellDiamondExtras(diamonds) {
   });
   return { gain, sold };
 }
-// Buy one Diamond copy straight away: twice the normal unlock price, up to the copies you can use
-function diamondCardCost(card) { return (CARD_UNLOCK_COST[card.rarity] || 0) * 2; }
+// Buy one Diamond copy straight away: 4x the normal unlock price (packs are the better deal), up to the copies you can use
+function diamondCardCost(card) { return (CARD_UNLOCK_COST[card.rarity] || 0) * 4; }
 function buyDiamondCardLogic(profile, cardId) {
   const card = findCard(cardId);
   if (!card) throw gameError("invalid-argument", "Unknown card.");
