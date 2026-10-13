@@ -1365,7 +1365,12 @@ function detectLang() {
   return "en";
 }
 let _lang = "en";
-function setCurrentLang(l) { _lang = LANGS.some((x) => x.id === l) ? l : "en"; }
+// Orbitron (the number / name font) has no letters like ř, ł, ş or Cyrillic: those languages use Exo 2, a similar techno face that has them all
+const DX_EXT_FONT_LANGS = ["cs", "sk", "pl", "tr", "uk"];
+function setCurrentLang(l) {
+  _lang = LANGS.some((x) => x.id === l) ? l : "en";
+  try { document.documentElement.style.setProperty("--dx-stat-font", DX_EXT_FONT_LANGS.includes(_lang) ? '"Exo 2"' : '"Orbitron"'); } catch (e) {}
+}
 function currentLang() { return _lang; }
 const _plural = {};
 function pluralCat(n) {
@@ -1569,15 +1574,15 @@ const DX_DISPLAY_FONT = `"Bahnschrift", "DIN Alternate", "Avenir Next Condensed"
 const DX_THIN_FONT = `"Segoe UI Light", "Segoe UI", "Helvetica Neue", Helvetica, "Roboto", system-ui, sans-serif`;
 const DX_PIXEL_FONT = `"AtomicPixel", "Lucida Console", "Courier New", monospace`;
 // numbers in the card stat bar: a bold, slanted, futuristic face (loaded from Google Fonts; falls back to the display font)
-const DX_STAT_FONT = `"Orbitron", ${DX_DISPLAY_FONT}`;
+const DX_STAT_FONT = `var(--dx-stat-font, "Orbitron"), ${DX_DISPLAY_FONT}`;
 (function dxLoadStatFont() {
   try {
     if (typeof document === "undefined" || document.getElementById("dx-stat-font")) return;
     const l = document.createElement("link");
     l.id = "dx-stat-font"; l.rel = "stylesheet";
-    l.href = "https://fonts.googleapis.com/css2?family=Orbitron:wght@700..900&display=swap";
+    l.href = "https://fonts.googleapis.com/css2?family=Orbitron:wght@700..900&family=Exo+2:wght@700..900&display=swap";
     // card names are fitted by measuring them, so they are fitted again once the font has arrived
-    l.onload = () => { try { document.fonts.load('700 16px "Orbitron"').then((f) => { if (f && f.length) { window.__dxStatFontReady = true; (window.__dxStatFontLs || []).forEach((fn) => fn(true)); } }).catch(() => {}); } catch (e) {} };
+    l.onload = () => { try { Promise.all([document.fonts.load('700 16px "Orbitron"'), document.fonts.load('700 16px "Exo 2"', "řłşж")]).then((r) => r[0]).then((f) => f).then((f) => { if (f && f.length) { window.__dxStatFontReady = true; (window.__dxStatFontLs || []).forEach((fn) => fn(true)); } }).catch(() => {}); } catch (e) {} };
     document.head.appendChild(l);
   } catch (e) {}
 })();
@@ -1977,9 +1982,11 @@ const DELUXE_STYLE = `
 .dx-card-name { top: 150px; }
 .dx-card-text { top: 192px; }
 /* card face, lower half: taller picture, name and text moved down, one footer row (class left, rarity mark centre) */
-.dx-card-art { height: 122px; }
-.dx-card-name { top: 166px; }
+.dx-card-art { top: 44px; left: 2px; right: 2px; height: 136px; border-radius: 2px 2px 6px 6px; }
+.dx-card-name { top: 176px; height: 28px; }
 .dx-card-text, .dx-card-text-item { top: 208px; height: 84px; }
+/* text box tinted by rarity, like on Diamond cards */
+.dx-card-text { background: linear-gradient(180deg, rgba(255,255,255,0.92), rgba(var(--dt, 226,240,255), 0.5)); box-shadow: inset 0 0 0 1px rgba(var(--dt, 226,240,255), 0.7), 0 0 10px rgba(var(--dt, 226,240,255), 0.35); }
 /* ---- hero panel: portrait column with HP (or armor) and AP boxes, hearts, AP dots, Deck / Hand tag ---- */
 .dx-hplate { box-sizing: border-box; }
 .dx-hp-col { position: relative; display: flex; flex-direction: column; gap: 3px; padding: 3px; box-sizing: border-box; border-radius: 10px; background: linear-gradient(155deg, #fff 0%, var(--hc) 30%, var(--hd) 100%); box-shadow: 0 4px 8px rgba(0,0,0,0.6); }
@@ -2051,7 +2058,8 @@ const DELUXE_STYLE = `
 .dx-card-foot { left: 10px; right: 10px; bottom: 6px; height: 18px; flex-direction: row; justify-content: center; align-items: center; gap: 0; }
 .dx-card-class { position: absolute; left: 0; top: 50%; transform: translateY(-50%) skewX(-12deg); max-width: calc(50% - 14px); overflow: hidden; white-space: nowrap;
   font-family: ${DX_STAT_FONT}; font-weight: 900; letter-spacing: 0.06em; text-transform: uppercase; text-shadow: 0 0 6px currentColor, 0 1px 1px #000; line-height: 1; }
-.dx-dia .dx-card-art { height: 128px; }
+.dx-dia .dx-card-art { top: 44px; left: 2px; right: 2px; height: 142px; }
+.dx-dia .dx-card-name { top: 176px; height: 28px; }
 .dx-dia .dx-card-class { text-shadow: 0 0 4px rgba(0,0,0,0.95), 0 0 6px currentColor; }
 /* minion: picture starts under the bar; Distract tab and keyword chips leave the top free */
 .dx-minion-art { top: 39px; border-radius: 3px 3px 9px 9px; }
@@ -2096,6 +2104,48 @@ const DELUXE_STYLE = `
 .dx-sb-min.dx-sb-dia .dx-sb-hp { border-top-left-radius: 3px; }
 .dx-sb-min.dx-sb-dia .dx-sb-atk { width: 32px; border-radius: 3px; background: conic-gradient(from 0deg, rgba(255,241,200,0.9), rgba(255,179,31,0.85) 25%, rgba(163,90,0,0.85) 50%, rgba(255,200,74,0.85) 75%, rgba(255,241,200,0.9)); box-shadow: inset 0 0 0 1px rgba(255,244,214,0.8), 0 0 6px rgba(255,180,40,0.7); }
 .dx-sb-min.dx-sb-dia .dx-sb-atk b, .dx-sb-min.dx-sb-dia .dx-sb-atk i { color: #fff; text-shadow: 0 0 5px #7a3d00, 0 1px 1px #3d1d00; }
+
+/* ==== layout B2: the stat bar sticks out over the card's top edge; the frame starts under it; tall picture with the name on a fade ==== */
+.dx-card-frame { top: 24px; border-radius: 10px 10px 16px 16px; padding: 0 5px 5px; }
+.dx-card-inner { border-radius: 6px 6px 11px 11px; }
+.dx-card-art, .dx-dia .dx-card-art { top: 20px; left: 0; right: 0; height: 190px; border-radius: 0; -webkit-mask-image: none; mask-image: none; }
+.dx-card-art img, .dx-card-art canvas { object-position: 50% 42% !important; }
+.dx-card-art::after { box-shadow: none; background: linear-gradient(180deg, rgba(0,0,0,0) 72%, rgba(0,0,0,0.88) 100%); }
+.dx-card-name, .dx-dia .dx-card-name { top: 183px; height: 26px; background: none; border: none; box-shadow: none; z-index: 2; text-shadow: 0 1px 2px #000, 0 0 6px #000; }
+.dx-dia .dx-card-name::before, .dx-dia .dx-card-name::after { display: none; }
+.dx-card-text, .dx-card-text-item { top: 216px; left: 7px; right: 7px; height: 66px; }
+.dx-card-foot { bottom: 3px; left: 7px; right: 7px; }
+.dx-sb { left: -6px; right: -6px; top: -8px; height: 56px; padding: 5px; gap: 5px; border-radius: 14px; z-index: 15;
+  box-shadow: inset 0 0 0 1.5px #2c3631, 0 0 0 2px #050706, 0 4px 10px rgba(0,0,0,0.75); }
+.dx-sb b { font-size: 29px; } .dx-sb i { font-size: 9.5px; margin-top: 3px; }
+.dx-sb-hp b { font-size: 29px; }
+.dx-sb-ap, .dx-sb-atk { width: 56px; }
+.dx-sb-ap { border-radius: 10px 4px 4px 4px; } .dx-sb-atk { border-radius: 4px 10px 4px 4px; }
+.dx-sb-ap.dx-sb-wide { width: 76px; }
+.dx-sb-plate b { font-size: 16px; }
+/* board minions */
+.dx-minion-frame { top: 18px; border-radius: 8px 8px 13px 13px; }
+.dx-minion-taunt .dx-minion-frame { border-radius: 8px 8px 30px 30px; }
+.dx-minion-art { top: 30px; left: 4px; right: 4px; bottom: 4px; inset: 30px 4px 4px 4px; border-radius: 2px 2px 9px 9px; }
+.dx-minion-art img, .dx-minion-art canvas { object-position: 50% 35% !important; }
+.dx-minion-taunt .dx-minion-art { border-radius: 2px 2px 25px 25px; }
+.dx-sb-min { left: -5px; right: -5px; top: -7px; height: 40px; padding: 4px; gap: 4px; border-radius: 11px; }
+.dx-sb-min b, .dx-sb-min .dx-sb-hp b { font-size: 21px; } .dx-sb-min i, .dx-sb-min .dx-sb-hp i { font-size: 7px; margin-top: 2px; }
+.dx-sb-min .dx-sb-atk { width: 40px; border-radius: 4px 9px 4px 4px; }
+.dx-sb-min .dx-sb-hp { border-top-left-radius: 9px; }
+/* Diamond in hand: the glass strip sits in the crown base and sticks out slightly; bigger crystals */
+.dx-sb-dia { left: -2px; right: -2px; top: -4px; height: 46px; padding: 5px 46px; border-radius: 6px; box-shadow: inset 0 1px 0 rgba(255,255,255,0.75), inset 0 -1px 0 rgba(var(--dt),0.7), 0 0 12px rgba(var(--dt),0.35), 0 3px 8px rgba(0,0,0,0.6); }
+.dx-sb-dia b, .dx-sb-dia .dx-sb-hp b { font-size: 26px; }
+.dx-sb-dia.dx-sb-item { padding-left: 46px; } .dx-sb-dia.dx-sb-item.dx-sb-w { padding-left: 64px; }
+.dx-sb-gem { top: -10px; width: 64px; height: 64px; }
+.dx-sb-gem::before { inset: 9px; } .dx-sb-gem::after { inset: 17px; }
+.dx-sb-gem b { font-size: 26px; } .dx-sb-gem i { font-size: 8.5px; }
+.dx-sb-gem-ap { left: -18px; } .dx-sb-gem-atk { right: -18px; }
+.dx-sb-gem-ap.dx-sb-wide { width: 80px; height: 48px; top: -5px; left: -16px; }
+/* Diamond on the table */
+.dx-sb-min.dx-sb-dia { left: 4px; right: 4px; top: -6px; height: 40px; padding: 4px; gap: 4px; border-radius: 5px; }
+.dx-sb-min.dx-sb-dia .dx-sb-atk { width: 38px; }
+.dx-dia-m .dx-minion-art { inset: 37px 4px 4px 4px; }
 `;
 
 /* ---------- Pixel Art: the same table, re-skinned. The font is a tiny
@@ -2226,8 +2276,9 @@ const PIXEL_STYLE = `
 .dx-skin-pixel .dx-sb-segs span.on, .dx-skin-pixel .dx-sb-fill { background: #e05a48; box-shadow: inset 0 2px 0 #ff9c8c; }
 .dx-skin-pixel .dx-sb-hp b, .dx-skin-pixel .dx-sb-hp i { color: #fff; }
 .dx-skin-pixel .dx-sb-hp.dx-sb-dmg b { color: #ffd24a; }
-.dx-skin-pixel .dx-card-art { top: 47px; height: 119px; }
-.dx-skin-pixel .dx-card-name { top: 166px; }
+.dx-skin-pixel .dx-card-art { top: 44px; left: 3px; right: 3px; height: 132px; }
+.dx-skin-pixel .dx-card-name { top: 176px; height: 28px; }
+.dx-skin-pixel .dx-card-text { background: linear-gradient(180deg, #f2ecdc, rgb(var(--dt, 226,240,255))); box-shadow: inset 3px 3px 0 rgba(255,255,255,0.6), inset -3px -3px 0 rgba(0,0,0,0.25); }
 .dx-skin-pixel .dx-card-text, .dx-skin-pixel .dx-card-text-item { top: 206px; height: 84px; }
 .dx-skin-pixel .dx-card-class { font-family: ${DX_PIXEL_FONT}; transform: translateY(-50%); text-shadow: 2px 2px 0 #0a0a06; letter-spacing: 0.02em; }
 .dx-skin-pixel .dx-minion-art { top: 39px; }
@@ -2242,6 +2293,22 @@ const PIXEL_STYLE = `
 .dx-skin-pixel .dx-mc-body { background: var(--rs); }
 .dx-skin-pixel .dx-mc-shape { filter: drop-shadow(3px 0 0 #0a0a06) drop-shadow(-3px 0 0 #0a0a06) drop-shadow(0 3px 0 #0a0a06) drop-shadow(0 -3px 0 #0a0a06); }
 .dx-skin-pixel .dx-dia-m .dx-minion-art { top: 37px; }
+
+/* layout B2, Pixel Art */
+.dx-skin-pixel .dx-card-frame { top: 24px; padding: 0 5px 5px; }
+.dx-skin-pixel .dx-dia .dx-card-frame { background: transparent !important; box-shadow: none !important; }
+.dx-skin-pixel .dx-card-art { top: 20px; left: 0; right: 0; height: 190px; border-bottom: none; }
+.dx-skin-pixel .dx-card-name { top: 183px; height: 26px; background: none; border: none; }
+.dx-skin-pixel .dx-card-text, .dx-skin-pixel .dx-card-text-item { top: 216px; height: 66px; }
+.dx-skin-pixel .dx-sb { box-shadow: inset 0 0 0 3px #0a0a06, 4px 4px 0 rgba(0,0,0,0.5); border-radius: 0; }
+.dx-skin-pixel .dx-sb b { font-size: 24px; } .dx-skin-pixel .dx-sb i { font-size: 9px; }
+.dx-skin-pixel .dx-sb-min b { font-size: 18px; } .dx-skin-pixel .dx-sb-min i { font-size: 7px; }
+.dx-skin-pixel .dx-minion-art, .dx-skin-pixel .dx-minion-taunt .dx-minion-art { inset: 30px 4px 4px 4px; }
+.dx-skin-pixel .dx-dia-m .dx-minion-art { inset: 37px 4px 4px 4px; }
+/* Pixel Diamond cards: no normal rarity frame on top of the crystal */
+.dx-skin-pixel .dx-dia .dx-card-frame { background: transparent; box-shadow: none; }
+.dx-skin-pixel .dx-dia .dx-card-inner { background: rgba(10,10,6,0.35); box-shadow: none; }
+.dx-skin-pixel .dx-dia .dx-card-art { border: none; }
 
 `;
 
@@ -2896,7 +2963,7 @@ function DeluxeCard({ card, scale = 1, dim, playable, tilt, selected, costText, 
   const isSpell = card.type === "spell";
   const useTilt = tilt && !pixel;
   const dia = diamond ? diaStyle(card.rarity) : null;
-  const vars = { "--rf": r.frame, "--rs": r.solid, "--re": r.edge, "--fc": fac.c, "--fd": fac.dark, ...(dia ? dia.vars : {}) };
+  const vars = { "--rf": r.frame, "--rs": r.solid, "--re": r.edge, "--fc": fac.c, "--fd": fac.dark, "--dt": (DIA_TINT[card.rarity] || DIA_TINT.common).rgb, ...(dia ? dia.vars : {}) };
   const big = (n) => (String(n).length > 1 ? (pixel ? 24 : 27) : (pixel ? 32 : 31));
   const fontReady = useStatFontReady();
   return (
@@ -2907,11 +2974,11 @@ function DeluxeCard({ card, scale = 1, dim, playable, tilt, selected, costText, 
           <div className="dx-card-inner">
             <div className="dx-card-art"><DeluxeArt card={card} /></div>
             <div className="dx-card-name">
-              <WrapFitText key={fontReady ? "f" : "n"} text={cardNameL(card)} width="100%" height={pixel ? 28 : 32} maxFontSize={pixel ? (cardNameL(card).length > 13 ? 12 : 16) : (cardNameL(card).length > 15 ? 12 : 15)} minFontSize={pixel ? 8 : 9} duration={7} color="#fff" />
+              <WrapFitText key={fontReady ? "f" : "n"} text={cardNameL(card)} width="100%" height={pixel ? 24 : 26} maxFontSize={pixel ? (cardNameL(card).length > 13 ? 11 : 15) : (cardNameL(card).length > 15 ? 11 : 14)} minFontSize={pixel ? 8 : 9} duration={7} color="#fff" />
             </div>
             <div className={"dx-card-text" + (isSpell ? " dx-card-text-item" : "")}>
               {card.text
-                ? <AutoScrollText text={richCardText(card)} height={74} fontSize={pixel ? 13 : 13.5} duration={10} bold color="#2a2115" />
+                ? <AutoScrollText text={richCardText(card)} height={58} fontSize={pixel ? 13 : 13.5} duration={10} bold color="#2a2115" />
                 : <div style={{ height: "100%", display: "flex", alignItems: "center", justifyContent: "center", fontSize: 12, color: "rgba(60,40,10,0.5)", fontStyle: pixel ? "normal" : "italic" }}>{tr("No special ability")}</div>}
             </div>
             {/* footer: the rarity mark (trefoil in the rarity colour) in the middle, the hero class on the left of the same row */}
