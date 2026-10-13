@@ -242,6 +242,7 @@ function openDiamondPackLogic(profile, rnd = Math.random) {
   const pick = (arr) => arr[Math.floor(rnd() * arr.length)];
   const cards = rarities.map((rarity) => {
     // win-reward cards only drop once they are unlocked
+    // Gifted cards only drop once they are won
     let pool = CARD_DB.filter((c) => c.rarity === rarity && (!c.reward || (profile.rewardCardIds || []).includes(c.id)));
     if (rarity === "unique") {
       const missing = pool.filter((c) => !(diamonds[c.id] > 0));
@@ -256,7 +257,12 @@ function openDiamondPackLogic(profile, rnd = Math.random) {
 }
 
 // a normal card can be sold if it was unlocked on its own (not through a hero, Unlock All or the free neutrals)
+// Sets: the win-reward cards are the "Gifted" set, everything else is the Standard Set.
+function cardSet(card) { return card && card.reward ? "gifted" : "standard"; }
+// Normal cards of the Standard Set can't be sold (they come with heroes / Unlock All, and selling them
+// would refund more than Unlock All costs). Gifted cards can't be sold at all. Later sets may allow it.
 function canSellNormal(card, profile) {
+  if (!card || cardSet(card) === "standard" || cardSet(card) === "gifted") return false;
   if (!profile || profile.unlockedAll) return false;
   if (!(profile.unlockedCardIds || []).includes(card.id)) return false;
   if (card.hero && (profile.unlockedHeroes || []).includes(card.hero)) return false;
@@ -267,6 +273,8 @@ function sellCardLogic(profile, cardId, diamond) {
   const card = findCard(cardId);
   if (!card) throw gameError("invalid-argument", "Unknown card.");
   const bullets = profile.bullets || 0;
+  // normal Gifted cards can't be sold; their Diamond copies can (owning one means the card is unlocked)
+  if (card.reward && !diamond) throw gameError("failed-precondition", "Gifted cards can't be sold.");
   if (diamond) {
     const diamonds = { ...(profile.diamonds || {}) };
     if (!(diamonds[cardId] > 0)) throw gameError("failed-precondition", "You don't own that card.");
@@ -316,7 +324,7 @@ function sellNormalExtras(copies) {
   Object.keys(copies).forEach((id) => {
     const card = findCard(id);
     const keep = diamondKeepMax(card);
-    if (!card || !(copies[id] > keep)) return;
+    if (!card || card.reward || !(copies[id] > keep)) return;
     const n = copies[id] - keep;
     gain += n * sellValue(card, false);
     sold += n;
