@@ -375,7 +375,8 @@ function applyStarterWin(profile) {
   const updated = { starterWins: step };
   const ids = CARD_DB.filter((c) => c.reward === step).map((c) => c.id);
   if (ids.length) updated.rewardCardIds = [...new Set([...(profile.rewardCardIds || []), ...ids])];
-  if (step === 5) { const packs = { ...(profile.packs || {}) }; packs.diamond = (packs.diamond || 0) + 2; updated.packs = packs; }
+  // first win: 1 free Diamond pack (opened straight after the game); fifth win: 2 more
+  if (step === 1 || step === 5) { const packs = { ...(profile.packs || {}) }; packs.diamond = (packs.diamond || 0) + (step === 1 ? 1 : 2); updated.packs = packs; }
   return updated;
 }
 
