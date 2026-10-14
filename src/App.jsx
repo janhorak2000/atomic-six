@@ -2250,6 +2250,39 @@ const DELUXE_STYLE = `
 .dx-sb-min.dx-sb-dia { left: 4px; right: 4px; top: -6px; height: 40px; padding: 4px; gap: 4px; border-radius: 5px; }
 .dx-sb-min.dx-sb-dia .dx-sb-atk { width: 38px; }
 .dx-dia-m .dx-minion-art { inset: 37px 4px 4px 4px; }
+/* ==== attack before health (approved "tinted glass B"): AP glows down the card's left edge, the top bar reads ATK | health ==== */
+.dx-ap-glow { position: absolute; left: 5px; top: 48px; width: 78px; height: 180px; z-index: 14; pointer-events: none; box-sizing: border-box;
+  display: flex; flex-direction: column; align-items: flex-start; justify-content: flex-start; padding: 8px 0 0 10px;
+  background: linear-gradient(90deg, rgba(4,46,22,0.95) 0%, rgba(4,46,22,0.7) 30%, rgba(4,46,22,0) 100%);
+  -webkit-mask-image: linear-gradient(180deg, #000 45%, transparent 100%); mask-image: linear-gradient(180deg, #000 45%, transparent 100%); }
+.dx-ap-glow::before { content: ""; position: absolute; left: -5px; top: -4px; bottom: 0; width: 3px; border-radius: 2px; background: #6dffa6; box-shadow: 0 0 8px #3be07a, 0 0 18px rgba(59,224,122,0.9); }
+.dx-ap-glow b, .dx-ap-glow i { font-family: ${DX_STAT_FONT}; font-style: normal; font-weight: 900; line-height: 0.92; display: block; position: relative; transform: skewX(-12deg); white-space: nowrap; }
+.dx-ap-glow b { font-size: 30px; color: #c9ffd9; text-shadow: 0 0 8px #3be07a, 0 0 2px #3be07a, 0 0 16px rgba(59,224,122,0.6); }
+.dx-ap-glow i { font-size: 9.5px; letter-spacing: 0.14em; margin-top: 3px; color: #7cf0a6; text-shadow: 0 0 5px rgba(59,224,122,0.8); }
+.dx-ap-glow.dx-sb-wide b { font-size: 21px; }
+/* the bar: tinted glass, yellow-orange behind attack turning red behind health */
+.dx-sb:not(.dx-sb-dia) { background: linear-gradient(90deg, rgba(255,179,31,0.42) 0%, rgba(255,140,36,0.38) 18%, rgba(255,59,44,0.42) 30%, rgba(255,59,44,0.4) 100%), rgba(16,10,6,0.3);
+  box-shadow: inset 0 0 0 1px rgba(255,200,140,0.36), inset 0 1px 0 rgba(255,240,215,0.42), 0 0 12px rgba(255,90,40,0.28), 0 3px 8px rgba(0,0,0,0.4); }
+.dx-sb-atk { border-radius: 10px 4px 4px 4px; }
+.dx-sb-min .dx-sb-atk { border-radius: 9px 4px 4px 4px; }
+/* health: dark red glass built like the attack box, curved at its top-right as attack is at its top-left */
+.dx-sb-hp { border-radius: 4px 10px 4px 4px; background: radial-gradient(circle at 50% 40%, #6e1a12, #2e0704); box-shadow: inset 0 0 0 1px #ff4a3a, inset 0 0 10px rgba(255,59,44,0.45), 0 0 6px rgba(255,59,44,0.3); }
+.dx-sb-min .dx-sb-hp { border-radius: 4px 9px 4px 4px; }
+.dx-sb-segs { border-radius: inherit; }
+.dx-sb-segs span { background: rgba(0,0,0,0.28); }
+.dx-sb-segs span.on, .dx-sb-fill { background: linear-gradient(180deg, rgba(255,120,100,0.6) 0%, rgba(190,45,32,0.55) 45%, rgba(120,20,12,0.6) 100%); box-shadow: inset 0 1px 0 rgba(255,210,200,0.55), 0 0 4px rgba(255,70,50,0.45); }
+.dx-sb:not(.dx-sb-dia) .dx-sb-segs span:last-child, .dx-sb:not(.dx-sb-dia) .dx-sb-fill { border-top-right-radius: 7px; }
+.dx-sb-min:not(.dx-sb-dia) .dx-sb-segs span:last-child { border-top-right-radius: 6px; }
+.dx-sb:not(.dx-sb-dia) .dx-sb-hp::after { content: ""; position: absolute; left: 2px; right: 2px; top: 2px; height: 42%; border-radius: 2px 8px 2px 2px; background: linear-gradient(180deg, rgba(255,255,255,0.34), rgba(255,255,255,0.04)); z-index: 1; pointer-events: none; }
+/* items have no attack: the whole bar is clear smoked glass framed in neon green, with ITEM glowing inside */
+.dx-sb.dx-sb-itembar { background: linear-gradient(180deg, rgba(24,30,27,0.55) 0%, rgba(14,18,16,0.85) 45%, rgba(8,12,10,0.97) 58%, rgba(8,12,10,0.97) 100%);
+  box-shadow: inset 0 0 0 1.5px #3be07a, inset 0 0 8px rgba(59,224,122,0.25), 0 0 8px rgba(59,224,122,0.4), 0 3px 8px rgba(0,0,0,0.4); }
+.dx-sb-itembar .dx-sb-plate { background: none; box-shadow: none; border-radius: 10px; }
+.dx-sb-itembar .dx-sb-plate b { color: #c9ffd9; text-shadow: 0 0 8px #3be07a, 0 0 2px #3be07a; }
+/* Diamond in hand: the attack crystal moves to the strip's left end, next to where the AP glow starts */
+.dx-sb-gem-atk.dx-sb-gem-first { right: auto; left: -18px; }
+.dx-sb-dia { padding: 5px 8px 5px 46px; }
+.dx-sb-dia.dx-sb-item, .dx-sb-dia.dx-sb-item.dx-sb-w { padding: 5px 8px; }
 `;
 
 /* ---------- Pixel Art: the same table, re-skinned. The font is a tiny
@@ -2406,6 +2439,15 @@ const PIXEL_STYLE = `
 .dx-skin-pixel .dx-card-text, .dx-skin-pixel .dx-card-text-item { top: 216px; height: 66px; }
 .dx-skin-pixel .dx-sb { box-shadow: inset 0 0 0 3px #0a0a06, 4px 4px 0 rgba(0,0,0,0.5); border-radius: 0; }
 .dx-skin-pixel .dx-sb b { font-size: 24px; } .dx-skin-pixel .dx-sb i { font-size: 9px; }
+.dx-skin-pixel .dx-sb-atk, .dx-skin-pixel .dx-sb-hp { border-radius: 0; }
+.dx-skin-pixel .dx-sb-hp::after { display: none; }
+.dx-skin-pixel .dx-sb-segs span:last-child, .dx-skin-pixel .dx-sb-fill { border-radius: 0 !important; }
+.dx-skin-pixel .dx-ap-glow { background: linear-gradient(90deg, rgba(14,74,34,0.95) 0 40%, rgba(14,74,34,0.55) 40% 70%, rgba(14,74,34,0) 70%);
+  -webkit-mask-image: linear-gradient(180deg, #000 0 50%, rgba(0,0,0,0.5) 50% 75%, transparent 75%); mask-image: linear-gradient(180deg, #000 0 50%, rgba(0,0,0,0.5) 50% 75%, transparent 75%); }
+.dx-skin-pixel .dx-ap-glow::before { border-radius: 0; background: #3be07a; box-shadow: none; width: 4px; }
+.dx-skin-pixel .dx-ap-glow b, .dx-skin-pixel .dx-ap-glow i { font-family: ${DX_PIXEL_FONT}; transform: none; color: #fff; text-shadow: 2px 2px 0 #0a0a06 !important; }
+.dx-skin-pixel .dx-ap-glow b { font-size: 24px; } .dx-skin-pixel .dx-ap-glow i { font-size: 9px; }
+.dx-skin-pixel .dx-sb.dx-sb-itembar { background: #0c1a10; box-shadow: inset 0 0 0 3px #3be07a, 4px 4px 0 rgba(0,0,0,0.5); }
 .dx-skin-pixel .dx-sb-min b { font-size: 18px; } .dx-skin-pixel .dx-sb-min i { font-size: 7px; }
 .dx-skin-pixel .dx-minion-art, .dx-skin-pixel .dx-minion-taunt .dx-minion-art { inset: 30px 4px 4px 4px; }
 .dx-skin-pixel .dx-dia-m .dx-minion-art { inset: 37px 4px 4px 4px; }
@@ -3019,22 +3061,26 @@ function DxStatBar({ minion, cost, atk, hp, maxHp, item, diamond, buffedAtk }) {
   const itemWord = tr("ITEM");
   const plate = <div className="dx-sb-cell dx-sb-plate"><b style={itemWord.length > 6 ? { fontSize: Math.max(8, Math.floor(84 / itemWord.length)), letterSpacing: "0.08em" } : undefined}>{itemWord}</b></div>;
   const hpCell = <div className={"dx-sb-cell dx-sb-hp" + (hpN < max ? " dx-sb-dmg" : "")}><DxHpGauge hp={hpN} max={max} /><b>{hpN}</b><i>{tr("HP")}</i></div>;
+  // AP sits in a green glow down the left edge of the card; the bar reads attack, then health
+  const apGlow = !minion && hasCost ? <div className={"dx-ap-glow" + (wide ? " dx-sb-wide" : "")} title={costTitle}><b>{cost}</b><i>{tr("AP")}</i></div> : null;
   if (diamond && !minion) {
-    // Diamond card in hand: a smoked-glass strip in the crown's base, with crystal gems for AP and attack at its ends
+    // Diamond card in hand: a smoked-glass strip in the crown's base, the attack crystal at its left end
     return (
       <>
-        <div className={"dx-sb dx-sb-dia" + (item ? " dx-sb-item" + (wide ? " dx-sb-w" : "") : "")}>{item ? plate : hpCell}</div>
-        {hasCost && <div className={"dx-sb-gem dx-sb-gem-ap" + (wide ? " dx-sb-wide" : "")} title={costTitle}><b>{cost}</b><i>{tr("AP")}</i></div>}
-        {!item && <div className="dx-sb-gem dx-sb-gem-atk"><b>{atk}</b><i>{tr("ATK")}</i></div>}
+        <div className={"dx-sb dx-sb-dia" + (item ? " dx-sb-item" : "")}>{item ? plate : hpCell}</div>
+        {apGlow}
+        {!item && <div className="dx-sb-gem dx-sb-gem-atk dx-sb-gem-first"><b>{atk}</b><i>{tr("ATK")}</i></div>}
       </>
     );
   }
   return (
-    <div className={"dx-sb" + (minion ? " dx-sb-min" : "") + (diamond ? " dx-sb-dia" : "")}>
-      {!minion && hasCost && <div className={"dx-sb-cell dx-sb-ap" + (wide ? " dx-sb-wide" : "")} title={costTitle}><b>{cost}</b><i>{tr("AP")}</i></div>}
-      {item ? plate : hpCell}
-      {!item && <div className={"dx-sb-cell dx-sb-atk" + (buffedAtk ? " dx-sb-buff" : "")}><b>{atk}</b><i>{tr("ATK")}</i></div>}
-    </div>
+    <>
+      <div className={"dx-sb" + (minion ? " dx-sb-min" : "") + (diamond ? " dx-sb-dia" : "") + (item ? " dx-sb-itembar" : "")}>
+        {!item && <div className={"dx-sb-cell dx-sb-atk" + (buffedAtk ? " dx-sb-buff" : "")}><b>{atk}</b><i>{tr("ATK")}</i></div>}
+        {item ? plate : hpCell}
+      </div>
+      {apGlow}
+    </>
   );
 }
 
@@ -3681,8 +3727,15 @@ function dxNewLogLines(prev, cur) {
   return [];
 }
 
-// Throws the attacker's card at its target and back, with a flash where it lands.
-function dxLunge(attEl, tgtEl, scale, stepped) {
+// The lunge is eased, so the card reaches its target (55% of the motion) well before 55% of the time: work out when.
+function dxBezierTime(p, x1, y1, x2, y2) {
+  const B = (t, a, b) => 3 * a * t * (1 - t) * (1 - t) + 3 * b * t * t * (1 - t) + t * t * t;
+  let lo = 0, hi = 1; for (let i = 0; i < 40; i++) { const m = (lo + hi) / 2; if (B(m, y1, y2) < p) lo = m; else hi = m; }
+  return B((lo + hi) / 2, x1, x2);
+}
+const DX_LUNGE_MS = 580, DX_LUNGE_CONTACT = Math.round(dxBezierTime(0.55, 0.3, 0.1, 0.3, 1) * DX_LUNGE_MS); // ~207 ms
+// Throws the attacker's card at its target and back, with a flash where it lands. onContact(anim) runs on the frame it connects.
+function dxLunge(attEl, tgtEl, scale, stepped, onContact) {
   if (!attEl || !tgtEl || typeof attEl.animate !== "function") return;
   try {
     const a = attEl.getBoundingClientRect(), t = tgtEl.getBoundingClientRect();
@@ -3702,12 +3755,13 @@ function dxLunge(attEl, tgtEl, scale, stepped) {
       { transform: `translate3d(${-dx * 0.07}px,${-dy * 0.07}px,0) scale(1.16) rotate(${stepped ? 0 : -5 * lean}deg)`, offset: 0.3 },
       { transform: `translate3d(${dx * 0.8}px,${dy * 0.8}px,0) scale(1.05) rotate(${stepped ? 0 : 7 * lean}deg)`, offset: 0.55 },
       { transform: "translate3d(0,0,0) scale(1) rotate(0deg)" },
-    ], { duration: 580, easing: "cubic-bezier(.3,.1,.3,1)" });
+    ], { duration: DX_LUNGE_MS, easing: "cubic-bezier(.3,.1,.3,1)" });
     anim.onfinish = anim.oncancel = () => { attEl.style.zIndex = oldZ; lifted.forEach(([el, z, pos]) => { el.style.zIndex = z; el.style.position = pos; }); };
     setTimeout(() => {
       tgtEl.classList.add("dx-impact");
       setTimeout(() => tgtEl.classList.remove("dx-impact"), 430);
-    }, 310);
+      if (onContact) onContact(anim);
+    }, DX_LUNGE_CONTACT);
   } catch (e) {}
 }
 
@@ -3992,13 +4046,42 @@ function dxSlamMine(root, uid) {
   };
   requestAnimationFrame(go);
 }
-// a heavy hitter (8+ attack) shakes the whole table when it connects
-function dxHeavyShake(root, amp) {
+// Quake (approved design): a heavy hitter (8+ attack) freezes the action for a split second on contact,
+// then a white flash, a crisp shockwave ring and sparks burst from the target and the table shakes hard and short.
+function dxShake(root, amp, dur, step) {
   if (!root || !root.animate) return;
-  const f = [{ translate: "0px 0px" }]; let px = 0;
-  for (let i = 1; i < 10; i++) { const k = Math.pow(1 - i / 10, 1.4); px = -Math.sign(px || 1) * (0.6 + Math.random() * 0.4) * amp * k; f.push({ translate: `${px.toFixed(1)}px ${((Math.random() * 2 - 1) * amp * 0.6 * k).toFixed(1)}px` }); }
+  const n = Math.round(dur / step), f = [{ translate: "0px 0px" }]; let px = 0;
+  for (let i = 1; i < n; i++) { const k = Math.pow(1 - i / n, 1.5); px = -Math.sign(px || 1) * (0.6 + Math.random() * 0.4) * amp * k; f.push({ translate: `${px.toFixed(1)}px ${((Math.random() * 2 - 1) * amp * 0.6 * k).toFixed(1)}px` }); }
   f.push({ translate: "0px 0px" });
-  root.animate(f, { duration: 420, easing: "ease-out" });
+  root.animate(f, { duration: dur, easing: "linear" });
+}
+function dxQuake(root, tgtEl, lunge) {
+  if (lunge && lunge.pause) { lunge.pause(); setTimeout(() => lunge.play(), 70); } // hit-stop
+  const r = tgtEl && tgtEl.getBoundingClientRect();
+  if (!r || !r.width) { dxShake(root, 11, 320, 26); return; }
+  const cx = r.left + r.width / 2, cy = r.top + r.height / 2, w = r.width;
+  const cv = document.createElement("canvas"), d = Math.min(2, window.devicePixelRatio || 1);
+  cv.width = window.innerWidth * d; cv.height = window.innerHeight * d;
+  cv.style.cssText = "position:fixed;inset:0;width:100vw;height:100vh;pointer-events:none;z-index:150;";
+  document.body.appendChild(cv);
+  const ctx = cv.getContext("2d"); ctx.setTransform(d, 0, 0, d, 0, 0);
+  const sparks = Array.from({ length: 26 }, () => { const a = Math.random() * 6.28, s = 0.2 + Math.random() * 0.8; return { x: cx, y: cy, vx: Math.cos(a) * s, vy: Math.sin(a) * s, life: 220 + Math.random() * 300, w: 1 + Math.random() * 1.2 }; });
+  const t0 = performance.now(); let lastT = t0;
+  const frame = () => {
+    const now = performance.now(), t = now - t0, dt = Math.min(50, now - lastT); lastT = now;
+    ctx.clearRect(0, 0, cv.width, cv.height);
+    ctx.globalCompositeOperation = "lighter";
+    if (t < 160) { const a = 0.95 * Math.pow(1 - t / 160, 2), R = w * 1.4, g = ctx.createRadialGradient(cx, cy, 0, cx, cy, R); g.addColorStop(0, `rgba(255,255,255,${a})`); g.addColorStop(1, "rgba(255,255,255,0)"); ctx.fillStyle = g; ctx.fillRect(cx - R, cy - R, R * 2, R * 2); }
+    if (t < 380) { const k = t / 380, rr = w * 2.3 * (1 - Math.pow(1 - k, 3)), a = 0.95 * (1 - k), bw = 5;
+      const g = ctx.createRadialGradient(cx, cy, Math.max(0, rr - bw * 3), cx, cy, rr + bw); g.addColorStop(0, "rgba(255,236,200,0)"); g.addColorStop(0.8, `rgba(255,236,200,${a * 0.35})`); g.addColorStop(0.96, `rgba(255,236,200,${a})`); g.addColorStop(1, "rgba(255,236,200,0)");
+      ctx.fillStyle = g; ctx.beginPath(); ctx.arc(cx, cy, rr + bw, 0, 6.29); ctx.fill(); }
+    let alive = t < 380;
+    for (const p of sparks) { if (t > p.life) continue; alive = true; const k = t / p.life; p.vx *= Math.pow(0.93, dt / 16); p.vy = p.vy * Math.pow(0.93, dt / 16) + 0.0006 * dt; p.x += p.vx * dt; p.y += p.vy * dt;
+      ctx.strokeStyle = `rgba(255,214,140,${1 - k})`; ctx.lineWidth = p.w; ctx.beginPath(); ctx.moveTo(p.x - p.vx * 16, p.y - p.vy * 16); ctx.lineTo(p.x, p.y); ctx.stroke(); }
+    if (alive) requestAnimationFrame(frame); else cv.remove();
+  };
+  requestAnimationFrame(frame);
+  dxShake(root, 11, 320, 26);
 }
 
 function DxSlamReveal({ r, portrait, pixel, scale, T }) {
@@ -4204,13 +4287,13 @@ function DeluxeGame({ g }) {
       let mt;
       if ((mt = /^(.+) attacks (.+) for (\d+)\.$/.exec(text))) {
         const att = pick(prev.players[actor].board, state.players[actor].board, mt[1], true);
-        dxLunge(att && elFor(att.uid), root.querySelector(`[data-dx-hero="${sideOf(foe)}"]`), scaleRef.current, pixel);
-        if (att && att.atk >= 8 && !reduceFx) setTimeout(() => dxHeavyShake(root, 8), 320); // the blow lands ~55% into the lunge
+        const heroT = root.querySelector(`[data-dx-hero="${sideOf(foe)}"]`);
+        dxLunge(att && elFor(att.uid), heroT, scaleRef.current, pixel, att && att.atk >= 8 && !reduceFx ? (anim) => dxQuake(root, heroT, anim) : null);
       } else if ((mt = /^(.+) clashes with (.+)\.$/.exec(text))) {
         const att = pick(prev.players[actor].board, state.players[actor].board, mt[1], true);
         const def = pick(prev.players[foe].board, state.players[foe].board, mt[2], false);
-        dxLunge(att && elFor(att.uid), def && elFor(def.uid), scaleRef.current, pixel);
-        if (att && att.atk >= 8 && !reduceFx) setTimeout(() => dxHeavyShake(root, 8), 320);
+        const defEl = def && elFor(def.uid);
+        dxLunge(att && elFor(att.uid), defEl, scaleRef.current, pixel, att && att.atk >= 8 && !reduceFx ? (anim) => dxQuake(root, defEl, anim) : null);
       } else if ((mt = /^(.+) plays (.+)\.$/.exec(text))) {
         const card = findCardByName(mt[2]);
         // an enemy minion is shown, then slammed onto its slot (DxSlamReveal); it stays hidden on the board until then
@@ -10335,7 +10418,7 @@ function gimpHoldUntil(fx, uid) {
   return k === -1 ? 0 : plan.start + k * GIMP_STEP + 380;
 }
 // how far the Gimp's attacks have got on screen: hits shown so far, and whether the hero hit has landed
-const GIMP_IMPACT = 310; // ms into a lunge when it connects (see dxLunge)
+const GIMP_IMPACT = 210; // ms into a lunge when it connects (see dxLunge, DX_LUNGE_CONTACT)
 function gimpProgress(fx, now = Date.now()) {
   const plan = gimpPlan(fx);
   if (!plan) return null;
