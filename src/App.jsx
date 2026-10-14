@@ -3907,8 +3907,14 @@ function dxSlamHide(uid, hide) {
   else { DX_SLAMMING.delete(uid); if (el) el.style.visibility = ""; }
 }
 // the slam cloud (approved preview): covers the whole card for a moment, so the big card can be swapped for the board card unseen
-let _dxDust = null;
-const dxDustSprite = () => _dxDust || (_dxDust = (() => {
+// dust takes the colour of the table it lands on (a little lighter, so it stays visible)
+const DX_DUST_TINTS = {
+  rustyard: [[122, 84, 60], [218, 170, 132]], bunker: [[112, 118, 116], [206, 212, 208]], swamp: [[72, 106, 58], [168, 208, 136]],
+  highway: [[98, 90, 86], [196, 184, 172]], reactor: [[62, 106, 120], [156, 206, 220]], dustbowl: [[152, 126, 90], [238, 216, 178]],
+};
+let DX_BOARD_ID = "dustbowl";
+const _dxDust = {};
+const dxDustSprite = () => { const key = DX_DUST_TINTS[DX_BOARD_ID] ? DX_BOARD_ID : "dustbowl"; const [lo, hi] = DX_DUST_TINTS[key]; return _dxDust[key] || (_dxDust[key] = (() => {
   const S = 128, c = document.createElement("canvas"); c.width = c.height = S; const g = c.getContext("2d"), im = g.createImageData(S, S);
   let seed = 4321; const R = () => { seed = (seed * 16807) % 2147483647; return seed / 2147483647; };
   const oct = [4, 8, 16, 32].map((n) => { const a = new Float32Array((n + 1) * (n + 1)); for (let i = 0; i < a.length; i++) a[i] = R(); return { n, a }; });
@@ -3919,17 +3925,17 @@ const dxDustSprite = () => _dxDust || (_dxDust = (() => {
       const a = o.a[iy * w + ix], b = o.a[iy * w + ix + 1], cc = o.a[(iy + 1) * w + ix], d = o.a[(iy + 1) * w + ix + 1];
       v += (a + (b - a) * sx + (cc - a) * sy + (a - b - cc + d) * sx * sy) * amp; tot += amp; amp *= 0.55; }
     v /= tot; const dd = Math.hypot(x - S / 2, y - S / 2) / (S / 2), al = (1 - ss(0.35, 1, dd + (v - 0.5) * 0.6)) * (0.65 + 0.5 * v), t = Math.max(0, Math.min(1, (v - 0.3) * 2.2)), i = (y * S + x) * 4;
-    im.data[i] = 120 + 90 * t; im.data[i + 1] = 104 + 80 * t; im.data[i + 2] = 82 + 64 * t; im.data[i + 3] = Math.max(0, Math.min(255, al * 255));
+    im.data[i] = lo[0] + (hi[0] - lo[0]) * t; im.data[i + 1] = lo[1] + (hi[1] - lo[1]) * t; im.data[i + 2] = lo[2] + (hi[2] - lo[2]) * t; im.data[i + 3] = Math.max(0, Math.min(255, al * 255));
   }
   g.putImageData(im, 0, 0); return c.toDataURL();
-})());
+})()); };
 const dxRnd = (a, b) => a + Math.random() * (b - a);
 function dxPuff(x, y, sz, z) { const d = document.createElement("div"); d.style.cssText = `position:fixed;left:${x - sz / 2}px;top:${y - sz / 2}px;width:${sz}px;height:${sz}px;pointer-events:none;z-index:${z};background:url(${dxDustSprite()}) center/100% 100% no-repeat;transform:rotate(${dxRnd(0, 360)}deg);`; document.body.appendChild(d); return d; }
 // the slam cloud: covers the whole card for a moment, then drifts out and settles
-function dxDustCover(r) {
+function dxDustCover(r, soft) {
   const w = r.width, h = r.height, cx = r.left + w / 2;
-  // a solid core right over the card, so nothing of it shows through at the peak
-  for (let i = 0; i < 7; i++) {
+  // a solid core right over the card, so nothing of it shows through at the peak (not needed for a soft landing)
+  for (let i = 0; i < (soft ? 0 : 7); i++) {
     const x = cx + dxRnd(-0.18, 0.18) * w, y = r.top + h * (0.12 + i * 0.13), sz = w * dxRnd(1.05, 1.3);
     const d = dxPuff(x, y, sz, 137), dx = dxRnd(-30, 30), dy = -dxRnd(20, 50), rot = dxRnd(-30, 30);
     const a = d.animate( [
@@ -3940,31 +3946,61 @@ function dxDustCover(r) {
     ], { duration: dxRnd(1400, 1700), delay: (6 - i) * 14, easing: "cubic-bezier(.25,.6,.35,1)", fill: "both" });
     a.onfinish = () => d.remove();
   }
-  for (let i = 0; i < 36; i++) {
-    const fy = Math.pow(Math.random(), 0.7), x = r.left - w * 0.15 + Math.random() * w * 1.3, y = r.bottom - fy * h * 1.1, sz = w * dxRnd(0.7, 1.1);
+  const peak = soft ? 0.55 : 1;
+  for (let i = 0; i < (soft ? 12 : 36); i++) {
+    const fy = soft ? Math.pow(Math.random(), 1.8) * 0.6 : Math.pow(Math.random(), 0.7), x = r.left - w * 0.15 + Math.random() * w * 1.3, y = r.bottom - fy * h * 1.1, sz = w * (soft ? dxRnd(0.45, 0.75) : dxRnd(0.7, 1.1));
     const d = dxPuff(x, y, sz, 136), dx = (x - cx) * dxRnd(0.5, 1.1), dy = -dxRnd(10, 40), st = (1 - fy) * 70 + dxRnd(0, 40), rot = dxRnd(-40, 40);
     const a = d.animate( [
       { transform: `rotate(0deg) scale(0.25)`, opacity: 0 },
-      { transform: `rotate(${rot * 0.2}deg) scale(0.95)`, opacity: 1, offset: 0.12 },
-      { transform: `translate(${dx * 0.25}px,${dy * 0.3}px) rotate(${rot * 0.5}deg) scale(1.1)`, opacity: 0.95, offset: 0.36 },
+      { transform: `rotate(${rot * 0.2}deg) scale(0.95)`, opacity: peak, offset: 0.12 },
+      { transform: `translate(${dx * 0.25}px,${dy * 0.3}px) rotate(${rot * 0.5}deg) scale(1.1)`, opacity: peak * 0.95, offset: 0.36 },
       { transform: `translate(${dx}px,${dy}px) rotate(${rot}deg) scale(1.55)`, opacity: 0 },
     ], { duration: dxRnd(1300, 1700), delay: st, easing: "cubic-bezier(.2,.6,.35,1)", fill: "both" });
     a.onfinish = () => d.remove();
   }
   // ground dust rolling out to both sides
-  for (let i = 0; i < 16; i++) {
-    const side = i % 2 ? 1 : -1, sz = w * dxRnd(0.35, 0.6), x = cx + side * dxRnd(0.2, 0.5) * w, y = r.bottom - dxRnd(0, 14);
+  for (let i = 0; i < (soft ? 10 : 16); i++) {
+    const side = i % 2 ? 1 : -1, sz = w * dxRnd(0.35, 0.6) * (soft ? 0.8 : 1), x = cx + side * dxRnd(0.2, 0.5) * w, y = r.bottom - dxRnd(0, 14);
     const d = dxPuff(x, y, sz, 135);
-    const a = d.animate( [{ transform: "scale(0.3)", opacity: 0.95 }, { transform: `translate(${side * dxRnd(60, 150)}px,${-dxRnd(0, 26)}px) scale(${dxRnd(1.6, 2.4)})`, opacity: 0 }], { duration: dxRnd(1000, 1500), easing: "cubic-bezier(.15,.7,.3,1)", fill: "both" });
+    const a = d.animate( [{ transform: "scale(0.3)", opacity: soft ? 0.7 : 0.95 }, { transform: `translate(${side * dxRnd(60, 150)}px,${-dxRnd(0, 26)}px) scale(${dxRnd(1.6, 2.4)})`, opacity: 0 }], { duration: dxRnd(1000, 1500), easing: "cubic-bezier(.15,.7,.3,1)", fill: "both" });
     a.onfinish = () => d.remove();
   }
   // a few pebbles
-  for (let i = 0; i < 10; i++) {
+  for (let i = 0; i < (soft ? 4 : 10); i++) {
     const d = document.createElement("div"), s = dxRnd(2, 5); d.style.cssText = `position:fixed;left:${cx + dxRnd(-w / 2, w / 2)}px;top:${r.bottom - 6}px;width:${s}px;height:${s}px;background:#2a2118;border-radius:1px;pointer-events:none;z-index:137`; document.body.appendChild(d);
     const vx = dxRnd(-120, 120), a = d.animate( [{ transform: "translate(0,0)" }, { transform: `translate(${vx * 0.5}px,${-dxRnd(30, 70)}px)`, offset: 0.4 }, { transform: `translate(${vx}px,${dxRnd(-6, 8)}px)`, opacity: 0 }], { duration: dxRnd(500, 800), easing: "ease-out", fill: "both" });
     a.onfinish = () => d.remove();
   }
 }
+function dxSlamMine(root, uid) {
+  let tries = 0;
+  const go = () => {
+    const el = root && root.querySelector(`[data-dx-uid="${uid}"]`);
+    if (!el) { if (tries++ < 12) requestAnimationFrame(go); return; }
+    if (!el.animate) return;
+    el.animate([
+      { translate: "0px -52px", scale: "1.3", opacity: 0.2 },
+      { translate: "0px 4px", scale: "0.94", opacity: 1, offset: 0.55, easing: "cubic-bezier(.2,.8,.3,1)" },
+      { translate: "0px -2px", scale: "1.03", offset: 0.75 },
+      { translate: "0px 0px", scale: "1" },
+    ], { duration: 460, easing: "cubic-bezier(.55,0,.9,.45)" });
+    setTimeout(() => {
+      dxDustCover(el.getBoundingClientRect(), true);
+      const lane = el.closest("[data-dx-lane]");
+      if (lane && lane.animate) lane.animate([{ translate: "0px 0px" }, { translate: "0px 3px" }, { translate: "0px -1px" }, { translate: "0px 0px" }], { duration: 220, easing: "ease-out" });
+    }, 250);
+  };
+  requestAnimationFrame(go);
+}
+// a heavy hitter (8+ attack) shakes the whole table when it connects
+function dxHeavyShake(root, amp) {
+  if (!root || !root.animate) return;
+  const f = [{ translate: "0px 0px" }]; let px = 0;
+  for (let i = 1; i < 10; i++) { const k = Math.pow(1 - i / 10, 1.4); px = -Math.sign(px || 1) * (0.6 + Math.random() * 0.4) * amp * k; f.push({ translate: `${px.toFixed(1)}px ${((Math.random() * 2 - 1) * amp * 0.6 * k).toFixed(1)}px` }); }
+  f.push({ translate: "0px 0px" });
+  root.animate(f, { duration: 420, easing: "ease-out" });
+}
+
 function DxSlamReveal({ r, portrait, pixel, scale, T }) {
   const ref = useRef(null), lab = useRef(null);
   useEffect(() => {
@@ -4064,6 +4100,7 @@ function DeluxeGame({ g }) {
   const T = (n) => (pixel ? Math.max(13, Math.round(n * 0.9)) : n) * u; // text size (the pixel font needs a floor to stay readable)
   // A different table every match, picked at random.
   const [boardId] = useState(() => BOARD_STYLES[Math.floor(Math.random() * BOARD_STYLES.length)].id);
+  DX_BOARD_ID = boardId; // slam dust takes this table's colour
   const boardDef = BOARD_STYLES.find((b) => b.id === boardId) || BOARD_STYLES[0];
   const [menuOpen, setMenuOpen] = useState(false);
   const [logOpen, setLogOpen] = useState(false);
@@ -4162,20 +4199,27 @@ function DeluxeGame({ g }) {
       return named.find((m) => changed(m, nowBoard)) || named[0] || null;
     };
     const newReveals = [];
+    const reduceFx = window.matchMedia && window.matchMedia("(prefers-reduced-motion: reduce)").matches;
     lines.forEach((text) => {
       let mt;
       if ((mt = /^(.+) attacks (.+) for (\d+)\.$/.exec(text))) {
         const att = pick(prev.players[actor].board, state.players[actor].board, mt[1], true);
         dxLunge(att && elFor(att.uid), root.querySelector(`[data-dx-hero="${sideOf(foe)}"]`), scaleRef.current, pixel);
+        if (att && att.atk >= 8 && !reduceFx) setTimeout(() => dxHeavyShake(root, 8), 320); // the blow lands ~55% into the lunge
       } else if ((mt = /^(.+) clashes with (.+)\.$/.exec(text))) {
         const att = pick(prev.players[actor].board, state.players[actor].board, mt[1], true);
         const def = pick(prev.players[foe].board, state.players[foe].board, mt[2], false);
         dxLunge(att && elFor(att.uid), def && elFor(def.uid), scaleRef.current, pixel);
+        if (att && att.atk >= 8 && !reduceFx) setTimeout(() => dxHeavyShake(root, 8), 320);
       } else if ((mt = /^(.+) plays (.+)\.$/.exec(text))) {
         const card = findCardByName(mt[2]);
         // an enemy minion is shown, then slammed onto its slot (DxSlamReveal); it stays hidden on the board until then
         const nm = card && card.type !== "spell" && actor !== myIdx ? state.players[actor].board.find((m) => m.name === card.name && !prev.players[actor].board.some((x) => x.uid === m.uid)) : null;
         if (nm) dxSlamHide(nm.uid, true);
+        else if (card && card.type !== "spell" && actor === myIdx && !reduceFx) {
+          const mine = state.players[actor].board.find((m) => m.name === card.name && !prev.players[actor].board.some((x) => x.uid === m.uid));
+          if (mine) dxSlamMine(root, mine.uid);
+        }
         if (card && (actor !== myIdx || card.type === "spell")) newReveals.push({ id: Date.now() + Math.random(), card, enemy: actor !== myIdx, slam: nm ? nm.uid : null, diamond: (state.players[actor].diamonds || []).includes(card.id) });
       }
     });
@@ -7246,7 +7290,7 @@ function PerkAnnounce({ state, myIdx }) {
     for (let i = perks.length - 1; i >= 0; i--) {
       const x = perks[i], was = before[i];
       if (!was) { setMsg({ key: Date.now(), x, kind: "pick" }); return; }
-      if (was.endsWith(":0") && x.revealed) { setMsg({ key: Date.now(), x, kind: "reveal" }); return; }
+      if (was.endsWith(":0") && x.revealed) { if (!PERK_BY_ID[x.id].surprise) setMsg({ key: Date.now(), x, kind: "reveal" }); return; } // Surprises get SurprisePop
     }
   }, [snap.join("|")]);
   // it covers the enemy hero, so it also goes away by itself after a while, or as soon as you tap somewhere else
@@ -7292,8 +7336,93 @@ function PerkAnnounce({ state, myIdx }) {
   );
 }
 
+// A Surprise going off (either side): its card bursts out of the "?" over the hero, stays a few seconds, then slowly fades.
+const SX_POP_HOLD = 3400, SX_POP_OUT = 1500;
+function SurprisePop({ state, myIdx }) {
+  const mode = useDisplay().mode;
+  const themed = isThemedMode(mode), pixel = mode === "pixel";
+  const snap = state.players.map((p) => (p.perks || []).map((x) => x.id + ":" + (x.revealed ? 1 : 0)).join(",")).join("|");
+  const prev = useRef(null);
+  const rects = useRef({});
+  const [queue, setQueue] = useState([]);
+  const ref = useRef(null);
+  // remember where each "?" badge is: it can disappear in the same moment its last Surprise goes off
+  useEffect(() => {
+    const look = () => ["me", "opp"].forEach((side) => { const b = document.querySelector(`[data-dx-hero="${side}"] .sx-badge`); if (b) { const r = b.getBoundingClientRect(); if (r.width) rects.current[side] = r; } });
+    look(); const t = setInterval(look, 400);
+    return () => clearInterval(t);
+  }, []);
+  useEffect(() => {
+    const before = prev.current;
+    prev.current = state.players.map((p) => (p.perks || []).map((x) => x.id + ":" + (x.revealed ? 1 : 0)));
+    if (!before) return;
+    const fresh = [];
+    state.players.forEach((p, idx) => (p.perks || []).forEach((x, i) => {
+      const was = before[idx] && before[idx][i];
+      const def = PERK_BY_ID[x.id];
+      if (def && def.surprise && x.revealed && was && was.endsWith(":0")) fresh.push({ key: Date.now() + Math.random(), def, side: idx === myIdx ? "me" : "opp" });
+    }));
+    if (fresh.length) setQueue((q) => [...q, ...fresh]);
+  }, [snap]);
+  const cur = queue[0] || null;
+  useEffect(() => {
+    if (!cur) return undefined;
+    const el = ref.current;
+    const next = () => setQueue((q) => q.slice(1));
+    if (!el || !el.animate) { const t = setTimeout(next, SX_POP_HOLD); return () => clearTimeout(t); }
+    // grows out of the badge
+    const hero = document.querySelector(`[data-dx-hero="${cur.side}"]`);
+    const b = rects.current[cur.side] || (hero && hero.getBoundingClientRect());
+    const pr = el.getBoundingClientRect();
+    const ox = b ? b.left + b.width / 2 - (pr.left + pr.width / 2) : 0, oy = b ? b.top + b.height / 2 - (pr.top + pr.height / 2) : 0;
+    const badge = document.querySelector(`[data-dx-hero="${cur.side}"] .sx-badge`);
+    if (badge && badge.animate) badge.animate([{ scale: "1" }, { scale: "1.6", filter: "brightness(2)" }, { scale: "1" }], { duration: 450, easing: "ease-out" });
+    const up = cur.side === "me" ? 10 : -10;
+    const a = el.animate([
+      { transform: `translate(${ox}px,${oy}px) scale(0.12)`, opacity: 0 },
+      { transform: "translate(0,0) scale(1.05)", opacity: 1, offset: 0.06 },
+      { transform: "translate(0,0) scale(1)", opacity: 1, offset: 0.09 },
+      { transform: "translate(0,0) scale(1)", opacity: 1, offset: SX_POP_HOLD / (SX_POP_HOLD + SX_POP_OUT) },
+      { transform: `translate(0,${-up}px) scale(0.98)`, opacity: 0 },
+    ], { duration: SX_POP_HOLD + SX_POP_OUT, easing: "ease-in-out", fill: "both" });
+    a.onfinish = next;
+    return () => { a.onfinish = null; a.cancel(); };
+  }, [cur ? cur.key : null]);
+  if (!cur) return null;
+  const def = cur.def, col = PERK_COLORS[def.level] || PERK_COLORS.item;
+  const hero = document.querySelector(`[data-dx-hero="${cur.side}"]`);
+  const hr = hero ? hero.getBoundingClientRect() : null;
+  const bw = Math.min(380, window.innerWidth - 16);
+  // beside the hero when there's room (so it doesn't cover the middle of the table); otherwise under the enemy hero / above yours
+  let left, pos;
+  if (hr && hr.left - bw - 12 >= 8) { left = hr.left - bw - 12; pos = cur.side === "opp" ? { top: Math.max(8, hr.top) } : { bottom: Math.max(8, window.innerHeight - hr.bottom) }; }
+  else if (hr && window.innerWidth - hr.right - bw - 12 >= 8) { left = hr.right + 12; pos = cur.side === "opp" ? { top: Math.max(8, hr.top) } : { bottom: Math.max(8, window.innerHeight - hr.bottom) }; }
+  else {
+    left = hr ? Math.max(8, Math.min(window.innerWidth - bw - 8, hr.left + hr.width / 2 - bw / 2)) : (window.innerWidth - bw) / 2;
+    pos = cur.side === "opp" ? { top: hr ? hr.bottom + 8 : 80 } : { bottom: hr ? window.innerHeight - hr.top + 8 : 160 };
+  }
+  const font = themed ? (pixel ? DX_PIXEL_FONT : DX_FONT) : FONT;
+  return createPortal(
+    <div ref={ref} key={cur.key} className="dx-surprise-pop" data-kwtap="1" onClick={() => setQueue((q) => q.slice(1))}
+      style={{ position: "fixed", left, width: bw, ...pos, zIndex: 365, boxSizing: "border-box", padding: "12px 16px 14px", cursor: "pointer", opacity: 0,
+        borderRadius: pixel ? 0 : 14, fontFamily: font, color: themed ? "#f3ecdf" : "#111", textAlign: "center",
+        background: themed ? `radial-gradient(ellipse at 50% 0%, ${col.row} 0%, rgba(14,12,10,0.97) 70%)` : "#fff",
+        border: `2px solid ${themed ? "#ffd24a" : "#000"}`,
+        boxShadow: themed ? `0 12px 34px rgba(0,0,0,0.65), 0 0 28px rgba(255,200,40,0.35), inset 0 0 18px ${col.glow.replace(/0\.\d+\)$/, "0.25)")}` : "3px 3px 0 rgba(0,0,0,0.25)" }}>
+      <div style={{ fontFamily: themed && !pixel ? DX_DISPLAY_FONT : font, fontWeight: 900, fontSize: 26, letterSpacing: themed && !pixel ? "0.08em" : 0, lineHeight: 1, color: themed ? "#ffd24a" : "#b35a00",
+        textShadow: themed ? "0 0 14px rgba(255,190,40,0.8), 0 2px 0 #5a3a00" : "none", transform: themed && !pixel ? "skewX(-8deg)" : undefined }}>{tr("SURPRISE!")}</div>
+      <div style={{ display: "flex", alignItems: "center", justifyContent: "center", gap: 8, marginTop: 8 }}>
+        <PerkIcon level={def.level} surprise size={24} />
+        <div style={{ fontWeight: 900, fontSize: 16, color: themed ? col.c : "#111", textTransform: themed ? "uppercase" : "none", letterSpacing: themed && !pixel ? "0.04em" : 0 }}>{perkNameL(def)}</div>
+      </div>
+      <div style={{ fontSize: 13.5, lineHeight: 1.4, marginTop: 6, opacity: 0.93 }}><PerkDesc def={def} dark={themed} /></div>
+    </div>,
+    document.body
+  );
+}
+
 function PerkChoice(props) {
-  return <><PerkAnnounce state={props.state} myIdx={props.myIdx} /><PerkChoiceModal {...props} /><CardFxHost state={props.state} myIdx={props.myIdx} /><ShotFxHost state={props.state} myIdx={props.myIdx} /></>;
+  return <><PerkAnnounce state={props.state} myIdx={props.myIdx} /><SurprisePop state={props.state} myIdx={props.myIdx} /><PerkChoiceModal {...props} /><CardFxHost state={props.state} myIdx={props.myIdx} /><ShotFxHost state={props.state} myIdx={props.myIdx} /></>;
 }
 // The perk choice. Shown to the player whose turn it is; the other player sees a small note.
 function PerkChoiceModal({ state, myIdx, onAction }) {
@@ -12927,15 +13056,36 @@ export default function App() {
     mutate: (fn) => setGameState((prev) => { if (!prev) return prev; const s2 = JSON.parse(JSON.stringify(prev)); fn(s2); s2.version = (prev.version || 1) + 1; return s2; }),
   };
 
-  // Drive the CPU's turn: one action at a time, with a short pause between each for pacing.
+  // Drive the CPU's turn: one action at a time, paced like a person playing. Each pause is long enough for the
+  // previous action to be shown (a played minion's reveal and slam, item shots, attack lunges, a Surprise going off),
+  // with a little random variation; the first move waits for the "Enemy turn" banner.
+  const cpuLastRef = useRef(null); // { kind, turnNumber, logLen }
   useEffect(() => {
     if (!isCpuMatch || !gameState || gameState.winner !== null) return;
     if (gameState.turn !== 1) return;
     if (gameState.tutorial) return; // the tutorial scripts the CPU itself
-    const timer = setTimeout(() => {
+    const last = cpuLastRef.current;
+    const fresh = !last || last.turnNumber !== gameState.turnNumber;
+    const PACE = { minion: 1900, spell: 1600, equip: 1000, attack: 1300, power: 1400, perk: 1200, end: 800, other: 1000 };
+    let wait = fresh ? 1800 : PACE[last.kind] || PACE.other;
+    // a Surprise or perk went off since the CPU's last move: give the player time to read it
+    const newLines = (gameState.log || []).slice(fresh ? -6 : last.logLen).map((l) => (l && l.text) || "");
+    if (newLines.some((t) => /^Surprise! /.test(t))) wait += 1800;
+    wait += Math.round((Math.random() - 0.3) * 350);
+    let timer = 0;
+    const act = () => {
+      // projectiles still flying: let them land first
+      if (typeof shotActive === "function" && shotActive()) { timer = setTimeout(act, 250); return; }
       const action = aiDecideAction(gameState, 1);
+      const me = gameState.players[1];
+      let kind = action.type === "playCard"
+        ? (action.slot !== undefined || (findCard(me.hand[action.handIdx]) || {}).type === "spell" ? "spell" : "minion")
+        : action.type === "endTurn" ? "end" : action.type === "choosePerk" || action.type === "discoverChoice" ? "perk"
+        : ["equip", "attack", "power"].includes(action.type) ? action.type : "other";
+      cpuLastRef.current = { kind, turnNumber: gameState.turnNumber, logLen: (gameState.log || []).length };
       handleAction(action, 1);
-    }, 700);
+    };
+    timer = setTimeout(act, Math.max(400, wait));
     return () => clearTimeout(timer);
   }, [isCpuMatch, gameState]);
 
