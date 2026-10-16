@@ -30,6 +30,14 @@ service cloud.firestore {
       allow delete: if false;
     }
 
+    // Legendary League: built every 30 minutes by the updateLegendaryBoard
+    // Cloud Function (Admin SDK). Everyone may read it, nobody may write it
+    // from the browser.
+    match /leaderboards/{boardId} {
+      allow read: if true;
+      allow write: if false;
+    }
+
     // Private: each player's sign-in email. Only the Cloud Functions (Admin
     // SDK) read or write this - the browser can't, so emails never leak via
     // the public leaderboard profiles above.
