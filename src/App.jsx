@@ -23,6 +23,7 @@ const callOpenDiamondPack = httpsCallable(functions, "openDiamondPack");
 const callSellCard = httpsCallable(functions, "sellCard");
 const callSellDiamondDuplicates = httpsCallable(functions, "sellDiamondDuplicates");
 const callAdminHideEmails = httpsCallable(functions, "adminHideEmails");
+const callAdminSetSiteFlags = httpsCallable(functions, "adminSetSiteFlags");
 const callBuyDiamondCard = httpsCallable(functions, "buyDiamondCard");
 const callClaimCpuWin = httpsCallable(functions, "claimCpuWin");
 
@@ -5283,6 +5284,16 @@ body { margin: 0; } /* the browser's default 8px margin made every menu page scr
 /* ---- phone (portrait) main screen: account badge + pop-up menu, compact hero picker ---- */
 .fx-top-phone { flex-wrap: nowrap; padding: 12px 0 10px; }
 .fx-brand-logo { line-height: 0; letter-spacing: 0 !important; flex-shrink: 1; min-width: 0; } .fx-brand-logo img { max-width: 100%; object-fit: contain; object-position: left center; }
+.fx-brand-logo { position: relative; overflow: visible !important; }
+/* the logo takes on the warm orange of the menu */
+.fx-theme-rust .fx-brand-logo img { filter: sepia(0.55) saturate(2.1) hue-rotate(-10deg) brightness(1.02) drop-shadow(0 0 10px rgba(232,140,40,0.35)); }
+.fx-beta { position: absolute; right: -62px; top: -8px; z-index: 2; pointer-events: none; white-space: nowrap; line-height: 1;
+  font-family: ${DX_STAT_FONT}; font-weight: 900; font-size: 10px; letter-spacing: 0.14em; padding: 4px 9px 4px 10px; border-radius: 999px; color: #120a03;
+  background: linear-gradient(180deg, #ffd08a, #ff9a2e 55%, #e2700f); rotate: 8deg;
+  box-shadow: 0 0 0 1px rgba(255,220,170,0.7) inset, 0 0 10px rgba(255,150,40,0.9), 0 0 22px rgba(255,120,20,0.55); animation: fxBetaGlow 2.4s ease-in-out infinite; }
+.fx-beta-sm { right: -52px; top: -9px; font-size: 8.5px; padding: 3px 7px 3px 8px; }
+@keyframes fxBetaGlow { 0%, 100% { box-shadow: 0 0 0 1px rgba(255,220,170,0.7) inset, 0 0 8px rgba(255,150,40,0.75), 0 0 18px rgba(255,120,20,0.4); } 50% { box-shadow: 0 0 0 1px rgba(255,230,190,0.9) inset, 0 0 14px rgba(255,160,50,1), 0 0 30px rgba(255,120,20,0.7); } }
+.fx-beta-px { font-family: ${DX_PIXEL_FONT}; border-radius: 0; letter-spacing: 0.05em; rotate: 0deg; animation: none; background: #ff9a2e; box-shadow: 3px 3px 0 #0a0a06, 0 0 0 2px #0a0a06; }
 .fx-top-phone { gap: 10px; } .fx-top-phone .fx-brand { font-size: 14px; letter-spacing: 0.16em; gap: 7px; min-width: 0; }
 .fx-badge { display: flex; align-items: center; gap: 10px; padding: 7px 8px 7px 12px; background: var(--fx-panel); border: 1px solid var(--fx-line); border-radius: var(--fx-radius); color: inherit; font: inherit; cursor: pointer; text-align: right; flex-shrink: 0; transition: border-color 0.15s, background 0.15s; }
 .fx-badge:hover, .fx-badge:active { border-color: var(--fx-ember); background: rgba(196,98,45,0.12); }
@@ -5421,6 +5432,34 @@ body { margin: 0; } /* the browser's default 8px margin made every menu page scr
 @media (prefers-reduced-motion: reduce) { .fx-menu *, .fx-menu *::before, .fx-menu *::after { animation-duration: 0.01s !important; animation-delay: 0s !important; transition-duration: 0.01s !important; } }
 `;
 
+
+/* ---------- game-wide switches the admin sets (users/_site): the OPEN BETA badge ---------- */
+const _siteFlags = { openBeta: true, ready: false }, _siteSubs = new Set();
+let _siteUnsub = null;
+function useSiteFlags() {
+  const [, bump] = useState(0);
+  useEffect(() => {
+    const f = () => bump((n) => n + 1);
+    _siteSubs.add(f);
+    if (!_siteUnsub) {
+      try {
+        _siteUnsub = onSnapshot(doc(db, "users", "_site"), (snap) => {
+          const d = snap.exists() ? snap.data() : {};
+          _siteFlags.openBeta = d.openBeta !== false; // shown until the admin switches it off
+          _siteFlags.ready = true;
+          _siteSubs.forEach((g) => g());
+        }, () => {});
+      } catch (e) { /* offline / no Firestore: keep the default */ }
+    }
+    return () => { _siteSubs.delete(f); };
+  }, []);
+  return _siteFlags;
+}
+function OpenBetaBadge({ pixel, small }) {
+  const site = useSiteFlags();
+  if (!site.openBeta) return null;
+  return <span className={"fx-beta" + (pixel ? " fx-beta-px" : "") + (small ? " fx-beta-sm" : "")}>{tr("OPEN BETA")}</span>;
+}
 function FxBackdrop() {
   const pixel = useDisplay().mode === "pixel";
   if (pixel) return <div className="fx-backdrop"><PixelBackdrop styleId="rustyard" dim={0.66} /></div>;
@@ -6073,12 +6112,12 @@ function FxApp({ a }) {
         <div className={"fx-wrap" + (phone === "landscape" ? " fx-wrap-land" : "")}>
           {phone ? (
             <div className="fx-top fx-top-phone">
-              <h1 className="fx-brand fx-brand-logo" role="link" title={tr("Main menu")} onClick={() => go("select")} style={{ margin: 0 }}><BrandLogo variant={pixel ? "pixel" : "white"} height={pixel ? 38 : 36} /></h1>
+              <h1 className="fx-brand fx-brand-logo" role="link" title={tr("Main menu")} onClick={() => go("select")} style={{ margin: 0 }}><BrandLogo variant={pixel ? "pixel" : "white"} height={pixel ? 38 : 36} /><OpenBetaBadge pixel={pixel} small /></h1>
               <FxUserBadge a={a} onOpen={() => setMenuOpen(true)} bubble={s === "select"} />
             </div>
           ) : (
           <div className="fx-top">
-            <h1 className="fx-brand fx-brand-logo" role="link" title={tr("Main menu")} onClick={() => go("select")}><BrandLogo variant={pixel ? "pixel" : "white"} height={pixel ? 58 : 52} /></h1>
+            <h1 className="fx-brand fx-brand-logo" role="link" title={tr("Main menu")} onClick={() => go("select")}><BrandLogo variant={pixel ? "pixel" : "white"} height={pixel ? 58 : 52} /><OpenBetaBadge pixel={pixel} /></h1>
             <div className="fx-top-right">
               {a.onlineCount !== null && <span><span className="fx-live" />{tr("{n} players online", { n: a.onlineCount })}</span>}
               <span className="fx-chip">{a.profileLoading ? "…" : tr("{n} Bullets", { n: a.myProfile?.bullets || 0 })}</span>
@@ -11868,6 +11907,13 @@ function AdminGrantPanel() {
     setRunning(false);
   }
 
+  const site = useSiteFlags();
+  const [betaMsg, setBetaMsg] = useState("");
+  async function toggleBeta() {
+    setBetaMsg("Saving...");
+    try { await callAdminSetSiteFlags({ openBeta: !site.openBeta }); setBetaMsg("Saved - every player sees the change straight away."); }
+    catch (e) { setBetaMsg("Failed: " + ((e && e.message) || e)); }
+  }
   const [hideMsg, setHideMsg] = useState("");
   async function hideEmails() {
     setHideMsg("Working...");
@@ -11877,6 +11923,11 @@ function AdminGrantPanel() {
 
   return (
     <div style={{ marginTop: 10 }}>
+      <div style={{ marginBottom: 14, padding: 8, border: "1px dashed #999", borderRadius: 4, display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap" }}>
+        <span style={{ fontSize: 12, fontWeight: 700 }}>OPEN BETA badge on the main screen:</span>
+        <button type="button" onClick={toggleBeta} style={{ fontFamily: FONT, fontSize: 12, fontWeight: 700, padding: "5px 12px", border: "2px solid #000", borderRadius: 999, background: site.openBeta ? "#ff9a2e" : "#fff", color: "#000", cursor: "pointer" }}>{site.openBeta ? "ON - click to switch off" : "OFF - click to switch on"}</button>
+        {betaMsg && <div style={{ fontSize: 11, width: "100%" }}>{betaMsg}</div>}
+      </div>
       <div style={{ marginBottom: 14, padding: 8, border: "1px dashed #999", borderRadius: 4 }}>
         <button type="button" onClick={hideEmails} style={{ fontFamily: FONT, fontSize: 12, padding: "5px 10px", border: "2px solid #000", borderRadius: 4, background: "#fff", cursor: "pointer" }}>Hide stored emails (one-time clean-up)</button>
         {hideMsg && <div style={{ fontSize: 11, marginTop: 6 }}>{hideMsg}</div>}
