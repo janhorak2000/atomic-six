@@ -37,6 +37,7 @@
 // ============================================================================
 
 const { onCall, HttpsError } = require("firebase-functions/v2/https");
+const { onSchedule } = require("firebase-functions/v2/scheduler");
 const { setGlobalOptions } = require("firebase-functions/v2");
 const { initializeApp } = require("firebase-admin/app");
 const { getFirestore, FieldValue } = require("firebase-admin/firestore");
@@ -48,7 +49,7 @@ const {
   applyMatchResult,
   QUEST_BULLET_REWARD, selectWeeklyQuests, questProgress, weeklyProgressFor,
   buyDiamondPacksLogic, openDiamondPackLogic, sellCardLogic, sellDiamondDuplicatesLogic, applyWinReward, buyDiamondCardLogic,
-  applyStarterWin,
+  applyStarterWin, currentMonthKey,
 } = require("./gameLogic.js");
 
 // A generous ceiling for an indie-scale game - raise it later if you
@@ -462,4 +463,67 @@ exports.adminHideEmails = onCall({ enforceAppCheck: true, invoker: "public" }, a
   }
   if (n > 0) await batch.commit();
   return { moved, total: snap.size };
+});
+
+/* =========================================================================
+   rebuildLegendaryBoard — the Legendary League, built on the server.
+
+   Before: every Legendary player's browser downloaded up to 500 full player
+   profiles each time it showed their rank or opened the leaderboard. That
+   cost grows with (players x players) and soon gets expensive.
+
+   Now: this function runs on its own every 30 minutes, reads this month's
+   Legendary players ONCE (only the 4 fields it needs), ranks them and
+   writes the result into a few small documents:
+     leaderboards/legendary          - top 100 + total count (what the
+                                       leaderboard screen shows)
+     leaderboards/legendaryRanks_N   - every player's place, split into
+                                       shards of up to 15,000 players
+   A player's browser then reads just 1-2 small documents (and caches them
+   for 10 minutes) instead of hundreds of profiles.
+   Ranking: win/loss ratio this month, then more wins, then fewer losses
+   (same order the old leaderboard used).
+   Cost: one read per Legendary player per run (48 runs a day) plus a few
+   writes - e.g. 1,000 Legendary players = ~48,000 reads a day, which is
+   about the size of Firestore's free daily allowance.
+   ========================================================================= */
+const LB_TOP = 100;
+const LB_SHARD_SIZE = 15000;
+// must match lbShardOf() in the app
+function lbShardOf(uid, k) {
+  let h = 0;
+  for (let i = 0; i < uid.length; i++) h = (h * 31 + uid.charCodeAt(i)) | 0;
+  return Math.abs(h) % k;
+}
+
+async function rebuildLegendaryBoard() {
+  const mk = currentMonthKey();
+  const snap = await db.collection("users")
+    .where("tier", "==", "Legendary").where("seasonKey", "==", mk)
+    .select("displayName", "monthWins", "monthLosses", "monthKey")
+    .get();
+  const list = snap.docs.map((d) => {
+    const x = d.data();
+    const same = x.monthKey === mk;
+    const w = same ? x.monthWins || 0 : 0, l = same ? x.monthLosses || 0 : 0;
+    return { u: d.id, n: String(x.displayName || "Player").slice(0, 24), w, l, r: l === 0 ? w : w / l };
+  });
+  list.sort((a, b) => b.r - a.r || b.w - a.w || a.l - b.l || (a.u < b.u ? -1 : 1));
+  const shards = Math.max(1, Math.ceil(list.length / LB_SHARD_SIZE));
+  const ranks = Array.from({ length: shards }, () => ({}));
+  list.forEach((p, i) => { ranks[lbShardOf(p.u, shards)][p.u] = i + 1; });
+  const updatedAtMs = Date.now();
+  const batch = db.batch();
+  ranks.forEach((r, i) => batch.set(db.collection("leaderboards").doc("legendaryRanks_" + i), { monthKey: mk, updatedAtMs, r }));
+  batch.set(db.collection("leaderboards").doc("legendary"), {
+    monthKey: mk, updatedAtMs, total: list.length, shards,
+    top: list.slice(0, LB_TOP).map(({ u, n, w, l }) => ({ u, n, w, l })),
+  });
+  await batch.commit();
+  return { total: list.length, shards };
+}
+
+exports.updateLegendaryBoard = onSchedule({ schedule: "every 30 minutes", maxInstances: 1, timeoutSeconds: 300 }, async () => {
+  const r = await rebuildLegendaryBoard();
+  console.log("Legendary board rebuilt", r);
 });
