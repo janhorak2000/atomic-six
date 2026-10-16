@@ -423,6 +423,25 @@ exports.adminGrantBullets = onCall({ enforceAppCheck: true, invoker: "public" },
 });
 
 /* =========================================================================
+   adminSetSiteFlags — switches for the whole game that only the admin can
+   change (for now: the OPEN BETA badge on the main screen). Stored in
+   users/_site, which every player can already read under the existing rules
+   (so no rules change is needed) but only this function can write.
+   ========================================================================= */
+exports.adminSetSiteFlags = onCall({ enforceAppCheck: true, invoker: "public" }, async (request) => {
+  requireAuth(request);
+  const callerEmail = request.auth.token && request.auth.token.email;
+  if (!callerEmail || !ADMIN_EMAILS.includes(callerEmail)) {
+    throw new HttpsError("permission-denied", "Not an admin.");
+  }
+  const flags = {};
+  if (request.data && typeof request.data.openBeta === "boolean") flags.openBeta = request.data.openBeta;
+  if (!Object.keys(flags).length) throw new HttpsError("invalid-argument", "Nothing to change.");
+  await db.collection("users").doc("_site").set(flags, { merge: true });
+  return flags;
+});
+
+/* =========================================================================
    adminHideEmails — one-time clean-up (safe to run again). Moves every
    email still sitting in a public users/{uid} profile into the private
    userEmails/{uid} collection and removes it from the profile.
