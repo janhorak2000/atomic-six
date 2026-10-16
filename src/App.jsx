@@ -3346,12 +3346,9 @@ function dxStamper(ctx) {
 }
 
 const DX_BLOOD = { thr: 0.4, depth: 0.5, rough: 0.2, bump: 7, shine: 34, gloss: 1, rim: 0.5, speck: 0.8, thin: [132, 14, 10], thick: [40, 3, 3], glint: [235, 200, 190], alphaThin: 0.8, alphaThick: 0.97 };
-function dxBloodURL(seed, kind) {
-  try {
+function dxBloodPaint(cv, seed, kind, DX_BLOOD) {
     const kill = kind === "kill";
-    const S = kill ? 340 : 160, c = S / 2;
-    const cv = document.createElement("canvas");
-    cv.width = S; cv.height = S;
+    const S = cv.width, c = S / 2;
     const ctx = cv.getContext("2d");
     ctx.fillStyle = "#000"; ctx.fillRect(0, 0, S, S);
     const stamp = dxStamper(ctx);
@@ -3396,13 +3393,62 @@ function dxBloodURL(seed, kind) {
         ctx.fillStyle = bone ? "rgba(120,10,10,0.45)" : "rgba(235,190,180,0.3)"; ctx.beginPath(); ctx.arc(cx - s * 0.2, cy - s * 0.2, s * 0.25, 0, 6.2832); ctx.fill();
       }
     }
+}
+function dxBloodURL(seed, kind) {
+  try {
+    const cv = document.createElement("canvas");
+    cv.width = cv.height = kind === "kill" ? 340 : 160;
+    dxBloodPaint(cv, seed, kind, DX_BLOOD);
     return cv.toDataURL("image/png");
   } catch (e) { return ""; }
 }
+/* Painting a blood stain takes a moment (a big one ~0.1-0.5 s), which froze the game right at the hit.
+   So a few stains of each size are painted ahead of time in a background worker (or in idle moments),
+   and each hit picks one, turned and mirrored so they still look different. */
+const DX_SPLAT_N = { hit: 6, kill: 5 };
+const DX_SPLATS = { hit: [], kill: [] };
+let _dxSplatBusy = false, _dxSplatWorker;
+function dxSplatWorker() {
+  if (_dxSplatWorker !== undefined) return _dxSplatWorker;
+  _dxSplatWorker = null;
+  try {
+    if (typeof Worker === "undefined" || typeof OffscreenCanvas === "undefined") return null;
+    const src = [mulberry32, dxValueNoise, dxShadeLiquid, dxStamper, dxBloodPaint].map((f) => f.toString()).join("\n") +
+      `\nconst DXB = ${JSON.stringify(DX_BLOOD)};\nonmessage = async (e) => { const { seed, kind } = e.data; try { const cv = new OffscreenCanvas(kind === "kill" ? 340 : 160, kind === "kill" ? 340 : 160); dxBloodPaint(cv, seed, kind, DXB); const blob = await cv.convertToBlob({ type: "image/png" }); postMessage({ kind, blob }); } catch (err) { postMessage({ kind, error: String(err) }); } };`;
+    _dxSplatWorker = new Worker(URL.createObjectURL(new Blob([src], { type: "text/javascript" })));
+  } catch (e) { _dxSplatWorker = null; }
+  return _dxSplatWorker;
+}
+function dxSplatWarm() {
+  if (_dxSplatBusy) return;
+  const kind = DX_SPLATS.kill.length < DX_SPLAT_N.kill ? "kill" : DX_SPLATS.hit.length < DX_SPLAT_N.hit ? "hit" : null;
+  if (!kind) return;
+  _dxSplatBusy = true;
+  const seed = 1009 + (DX_SPLATS[kind].length + 1) * 7919 + (kind === "kill" ? 3 : 0);
+  const next = () => { _dxSplatBusy = false; setTimeout(dxSplatWarm, 30); };
+  const w = dxSplatWorker();
+  if (w) {
+    w.onmessage = (e) => { if (e.data && e.data.blob) DX_SPLATS[e.data.kind].push(URL.createObjectURL(e.data.blob)); else _dxSplatWorker = null; next(); };
+    w.onerror = () => { _dxSplatWorker = null; next(); };
+    w.postMessage({ seed, kind });
+  } else {
+    // no worker: paint on the page, but only when the browser is idle
+    const idle = window.requestIdleCallback || ((f) => setTimeout(f, 200));
+    idle(() => { const u = dxBloodURL(seed, kind); if (u) DX_SPLATS[kind].push(u); next(); });
+  }
+}
+if (typeof window !== "undefined") setTimeout(dxSplatWarm, 1500);
+function dxSplatFor(seed, kind) {
+  const k = kind === "kill" ? "kill" : "hit", pool = DX_SPLATS[k];
+  if (pool.length) return pool[seed % pool.length];
+  const u = dxBloodURL(seed, k); // not painted yet (very early hit): paint this one now
+  if (u) pool.push(u);
+  return u;
+}
 function DxSplat({ seed, kind }) {
-  const url = React.useMemo(() => dxBloodURL(seed, kind), [seed, kind]);
+  const url = React.useMemo(() => dxSplatFor(seed, kind), [seed, kind]);
   const size = kind === "kill" ? 430 : 180;
-  return url ? <img src={url} alt="" draggable={false} style={{ display: "block", width: size, height: size }} /> : null;
+  return url ? <img src={url} alt="" draggable={false} style={{ display: "block", width: size, height: size, transform: `rotate(${seed % 360}deg) scaleX(${seed % 2 ? -1 : 1})` }} /> : null;
 }
 
 /* toxic goo: one thick, murky coat of slime (made once), plus a few drips and bubbles that move */
@@ -4099,19 +4145,22 @@ function dxQuake(root, tgtEl, lunge) {
   if (lunge && lunge.pause) { lunge.pause(); setTimeout(() => lunge.play(), 70); } // hit-stop
   const r = tgtEl && tgtEl.getBoundingClientRect();
   if (!r || !r.width) { dxShake(root, 11, 320, 26); return; }
-  const cx = r.left + r.width / 2, cy = r.top + r.height / 2, w = r.width;
-  const cv = document.createElement("canvas"), d = Math.min(2, window.devicePixelRatio || 1);
-  cv.width = window.innerWidth * d; cv.height = window.innerHeight * d;
-  cv.style.cssText = "position:fixed;inset:0;width:100vw;height:100vh;pointer-events:none;z-index:150;";
+  // the flash, ring and sparks are drawn on a small canvas just around the target (a full-screen one stalled slower devices)
+  const w = r.width, R = Math.ceil(w * 2.3 + 30), size = R * 2;
+  const d = Math.min(1.5, window.devicePixelRatio || 1);
+  const cv = document.createElement("canvas");
+  cv.width = Math.round(size * d); cv.height = Math.round(size * d);
+  cv.style.cssText = `position:fixed;left:${r.left + w / 2 - R}px;top:${r.top + r.height / 2 - R}px;width:${size}px;height:${size}px;pointer-events:none;z-index:150;`;
   document.body.appendChild(cv);
   const ctx = cv.getContext("2d"); ctx.setTransform(d, 0, 0, d, 0, 0);
+  const cx = R, cy = R;
   const sparks = Array.from({ length: 26 }, () => { const a = Math.random() * 6.28, s = 0.2 + Math.random() * 0.8; return { x: cx, y: cy, vx: Math.cos(a) * s, vy: Math.sin(a) * s, life: 220 + Math.random() * 300, w: 1 + Math.random() * 1.2 }; });
   const t0 = performance.now(); let lastT = t0;
   const frame = () => {
     const now = performance.now(), t = now - t0, dt = Math.min(50, now - lastT); lastT = now;
-    ctx.clearRect(0, 0, cv.width, cv.height);
+    ctx.clearRect(0, 0, size, size);
     ctx.globalCompositeOperation = "lighter";
-    if (t < 160) { const a = 0.95 * Math.pow(1 - t / 160, 2), R = w * 1.4, g = ctx.createRadialGradient(cx, cy, 0, cx, cy, R); g.addColorStop(0, `rgba(255,255,255,${a})`); g.addColorStop(1, "rgba(255,255,255,0)"); ctx.fillStyle = g; ctx.fillRect(cx - R, cy - R, R * 2, R * 2); }
+    if (t < 160) { const a = 0.95 * Math.pow(1 - t / 160, 2), R2 = w * 1.4, g = ctx.createRadialGradient(cx, cy, 0, cx, cy, R2); g.addColorStop(0, `rgba(255,255,255,${a})`); g.addColorStop(1, "rgba(255,255,255,0)"); ctx.fillStyle = g; ctx.fillRect(cx - R2, cy - R2, R2 * 2, R2 * 2); }
     if (t < 380) { const k = t / 380, rr = w * 2.3 * (1 - Math.pow(1 - k, 3)), a = 0.95 * (1 - k), bw = 5;
       const g = ctx.createRadialGradient(cx, cy, Math.max(0, rr - bw * 3), cx, cy, rr + bw); g.addColorStop(0, "rgba(255,236,200,0)"); g.addColorStop(0.8, `rgba(255,236,200,${a * 0.35})`); g.addColorStop(0.96, `rgba(255,236,200,${a})`); g.addColorStop(1, "rgba(255,236,200,0)");
       ctx.fillStyle = g; ctx.beginPath(); ctx.arc(cx, cy, rr + bw, 0, 6.29); ctx.fill(); }
