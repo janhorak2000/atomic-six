@@ -1,10 +1,9 @@
 import { defineConfig } from "vite";
 import react from "@vitejs/plugin-react";
 
-// IMPORTANT: change "atomic-six" below to match your GitHub repo name exactly.
-// This tells the built site "I live at username.github.io/atomic-six/", not at the root.
-// If you set up a custom domain instead, change base back to "/".
+// The game now lives on its own domain (atomicbunch.com), so it is served from the root "/".
+// (It was "/atomic-six/" while the game lived at username.github.io/atomic-six/.)
 export default defineConfig({
   plugins: [react()],
-  base: "/atomic-six/",
+  base: "/",
 });
