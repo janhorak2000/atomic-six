@@ -41,6 +41,7 @@ const { onSchedule } = require("firebase-functions/v2/scheduler");
 const { setGlobalOptions } = require("firebase-functions/v2");
 const { initializeApp } = require("firebase-admin/app");
 const { getFirestore, FieldValue } = require("firebase-admin/firestore");
+const { getAuth } = require("firebase-admin/auth");
 
 const {
   HEROES,
@@ -71,6 +72,16 @@ const ADMIN_EMAILS = ["janhorak2000@gmail.com"];
 function requireAuth(request) {
   if (!request.auth || !request.auth.uid) {
     throw new HttpsError("unauthenticated", "Sign in required.");
+  }
+  // Guests (anonymous accounts) never earn or spend anything, and email
+  // accounts must confirm their address before they can.
+  const token = request.auth.token || {};
+  const provider = token.firebase && token.firebase.sign_in_provider;
+  if (provider === "anonymous") {
+    throw new HttpsError("permission-denied", "Guests can't do this. Register to keep your progress.");
+  }
+  if (provider === "password" && !token.email_verified) {
+    throw new HttpsError("permission-denied", "Please confirm your email first.");
   }
   return request.auth.uid;
 }
@@ -204,6 +215,9 @@ exports.claimFirstHero = onCall({ enforceAppCheck: true, invoker: "public" }, as
   const uid = requireAuth(request);
   const hero = request.data && request.data.hero;
   if (!HEROES.includes(hero)) throw new HttpsError("invalid-argument", "Unknown hero.");
+  // creating the account: the player must have ticked "I agree to the Terms of Use and Privacy Policy"
+  const terms = request.data && request.data.terms;
+  if (typeof terms !== "string" || !terms) throw new HttpsError("failed-precondition", "Please accept the Terms of Use and Privacy Policy first.");
 
   const userRef = db.collection("users").doc(uid);
   const auth = request.auth;
@@ -221,6 +235,8 @@ exports.claimFirstHero = onCall({ enforceAppCheck: true, invoker: "public" }, as
       unlockedHeroes: [hero],
       unlockedCardIds: bonusIds,
       bullets: existing.bullets || 0,
+      termsVersion: terms.slice(0, 20),
+      termsAcceptedAt: Date.now(),
     };
     tx.set(userRef, { ...profile, email: FieldValue.delete() }, { merge: true });
     rememberEmail(tx, uid, auth);
@@ -239,6 +255,9 @@ exports.buyHeroUnlock = onCall({ enforceAppCheck: true, invoker: "public" }, asy
   const uid = requireAuth(request);
   const hero = request.data && request.data.hero;
   if (!HEROES.includes(hero)) throw new HttpsError("invalid-argument", "Unknown hero.");
+  // creating the account: the player must have ticked "I agree to the Terms of Use and Privacy Policy"
+  const terms = request.data && request.data.terms;
+  if (typeof terms !== "string" || !terms) throw new HttpsError("failed-precondition", "Please accept the Terms of Use and Privacy Policy first.");
 
   const userRef = db.collection("users").doc(uid);
   return db.runTransaction(async (tx) => {
@@ -437,6 +456,7 @@ exports.adminSetSiteFlags = onCall({ enforceAppCheck: true, invoker: "public" },
   }
   const flags = {};
   if (request.data && typeof request.data.openBeta === "boolean") flags.openBeta = request.data.openBeta;
+  if (request.data && typeof request.data.guestVsGuest === "boolean") flags.guestVsGuest = request.data.guestVsGuest;
   if (!Object.keys(flags).length) throw new HttpsError("invalid-argument", "Nothing to change.");
   await db.collection("users").doc("_site").set(flags, { merge: true });
   return flags;
@@ -526,4 +546,72 @@ async function rebuildLegendaryBoard() {
 exports.updateLegendaryBoard = onSchedule({ schedule: "every 30 minutes", maxInstances: 1, timeoutSeconds: 300 }, async () => {
   const r = await rebuildLegendaryBoard();
   console.log("Legendary board rebuilt", r);
+});
+
+/* =========================================================================
+   claimGuestName — "Play as Guest". Gives an anonymous (guest) account its
+   name: Guest0001, Guest0002, ... counted one by one in meta/guestCounter.
+   Calling it again from the same guest returns the same name. Guests get no
+   profile, no Bullets and no rank.
+   ========================================================================= */
+exports.claimGuestName = onCall({ enforceAppCheck: true, invoker: "public" }, async (request) => {
+  if (!request.auth || !request.auth.uid) throw new HttpsError("unauthenticated", "Sign in required.");
+  const token = request.auth.token || {};
+  if (!token.firebase || token.firebase.sign_in_provider !== "anonymous") {
+    throw new HttpsError("failed-precondition", "Only guests get a guest name.");
+  }
+  const uid = request.auth.uid;
+  const guestRef = db.collection("guests").doc(uid);
+  const counterRef = db.collection("meta").doc("guestCounter");
+  return db.runTransaction(async (tx) => {
+    const g = await tx.get(guestRef);
+    if (g.exists && g.data().name) return { name: g.data().name };
+    const c = await tx.get(counterRef);
+    const n = ((c.exists && c.data().n) || 0) + 1;
+    const name = "Guest" + String(n).padStart(4, "0");
+    tx.set(counterRef, { n }, { merge: true });
+    tx.set(guestRef, { name, createdAtMs: Date.now() });
+    return { name };
+  });
+});
+
+/* =========================================================================
+   dailyCleanup — keeps the promises in the Privacy Policy (and the database
+   small): once a day it deletes
+     - finished/abandoned matches older than 30 days,
+     - matchmaking queue entries older than a day,
+     - guest accounts (anonymous sign-ins) and their guest names 30 days
+       after they were created.
+   ========================================================================= */
+const DAY_MS = 24 * 60 * 60 * 1000;
+async function deleteQueryInBatches(q, max = 5000) {
+  let total = 0;
+  while (total < max) {
+    const snap = await q.limit(400).get();
+    if (snap.empty) break;
+    const batch = db.batch();
+    snap.docs.forEach((d) => batch.delete(d.ref));
+    await batch.commit();
+    total += snap.size;
+    if (snap.size < 400) break;
+  }
+  return total;
+}
+exports.dailyCleanup = onSchedule({ schedule: "every day 04:10", timeZone: "Europe/Madrid", maxInstances: 1, timeoutSeconds: 540 }, async () => {
+  const now = Date.now();
+  const matches = await deleteQueryInBatches(db.collection("matches").where("turnStartedAt", "<", now - 30 * DAY_MS));
+  const queue = await deleteQueryInBatches(db.collection("matchmakingQueue").where("createdAtMs", "<", now - DAY_MS));
+  let guests = 0;
+  for (let round = 0; round < 10; round++) {
+    const snap = await db.collection("guests").where("createdAtMs", "<", now - 30 * DAY_MS).limit(500).get();
+    if (snap.empty) break;
+    const uids = snap.docs.map((d) => d.id);
+    try { await getAuth().deleteUsers(uids); } catch (e) { console.error("deleteUsers failed", e); }
+    const batch = db.batch();
+    snap.docs.forEach((d) => { batch.delete(d.ref); batch.delete(db.collection("users").doc(d.id)); });
+    await batch.commit();
+    guests += uids.length;
+    if (snap.size < 500) break;
+  }
+  console.log("dailyCleanup", { matches, queue, guests });
 });
