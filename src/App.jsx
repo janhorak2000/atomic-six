@@ -8781,7 +8781,7 @@ function TutorialLayer({ state, onAction }) {
   // the final win
   useEffect(() => {
     if (!isLast || (state.winner === null && !t.lessonDone)) return undefined;
-    const id = setTimeout(() => setShowDone(true), state.winner === 0 || guest ? 2600 : 900);
+    const id = setTimeout(() => setShowDone(true), guest ? 7500 : state.winner === 0 ? 2600 : 900); // guests: let the Mini Nuke play out
     return () => clearTimeout(id);
   }, [state.winner, isLast, t.lessonDone]);
 
@@ -8804,7 +8804,7 @@ function TutorialLayer({ state, onAction }) {
   // guests: the next lesson starts on its own a moment after one is done
   useEffect(() => {
     if (!active || !guest || !t.lessonDone || isLast) return undefined;
-    const id = setTimeout(() => TUT.app.next && TUT.app.next(), 700);
+    const id = setTimeout(() => TUT.app.next && TUT.app.next(), 3000); // time to watch what just happened (a grenade, a perk...)
     return () => clearTimeout(id);
   }, [active, guest, t.lessonDone, isLast, t.lesson]);
 
